@@ -541,7 +541,21 @@ Three hivemind tools are registered:
   hivemind_read   { path }            read full content at a memory path
   hivemind_index  { prefix?, limit? } list summary entries
 
-Prefer these tools — one call returns ranked hits across all summaries and sessions in a single SQL query. Different paths under /summaries/<username>/ are different users; do NOT merge or alias them. Fall back to grep on ~/.deeplake/memory/ only if tools are unavailable.`;
+Prefer these tools — one call returns ranked hits across all summaries and sessions in a single SQL query. Different paths under /summaries/<username>/ are different users; do NOT merge or alias them. Fall back to grep on ~/.deeplake/memory/ only if tools are unavailable.
+
+SKILLS (skilify) — mine + share reusable skills across the org. Run these in a terminal (or via shell if available):
+- hivemind skilify                         — show scope/team/install + per-project state
+- hivemind skilify pull                    — sync project skills from the org table
+- hivemind skilify pull --user <email>     — only that author's skills
+- hivemind skilify pull --users a,b,c      — multiple authors (CSV)
+- hivemind skilify pull --all-users        — explicit "no author filter"
+- hivemind skilify pull --to project|global  — install location
+- hivemind skilify pull --dry-run          — preview only
+- hivemind skilify pull --force            — overwrite local (creates .bak)
+- hivemind skilify pull <skill-name>       — pull only that skill (combines with --user)
+- hivemind skilify scope <me|team|org>     — sharing scope for new skills
+- hivemind skilify install <project|global>  — default install location
+- hivemind skilify team add|remove|list <name>  — manage team list`;
 
 export default function hivemindExtension(pi: ExtensionAPI): void {
   const captureEnabled = process.env.HIVEMIND_CAPTURE !== "false";

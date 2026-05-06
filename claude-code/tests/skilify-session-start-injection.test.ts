@@ -24,6 +24,17 @@ const SESSION_START_BUNDLES: Array<[string, string]> = [
   ["hermes",      resolve(BUNDLE_ROOT, "hermes",      "bundle", "session-start.js")],
 ];
 
+// Pi and OpenClaw don't go through the same esbuild bundle pipeline:
+//   - Pi ships pi/extension-source/hivemind.ts as raw .ts (pi compiles it)
+//   - OpenClaw exposes its surface via openclaw/skills/SKILL.md (loaded by
+//     the openclaw runtime's skill index, not bundled JS)
+// Both are still part of the discoverability matrix and must advertise the
+// skilify family alongside the four hook-driven agents.
+const NON_BUNDLE_SURFACES: Array<[string, string]> = [
+  ["pi-extension-source", resolve(BUNDLE_ROOT, "pi", "extension-source", "hivemind.ts")],
+  ["openclaw-skill",      resolve(BUNDLE_ROOT, "openclaw", "skills", "SKILL.md")],
+];
+
 describe("skilify SessionStart injection (per-agent bundles)", () => {
   it.each(SESSION_START_BUNDLES)("%s bundle exists", (_label, p) => {
     expect(existsSync(p)).toBe(true);
@@ -72,6 +83,40 @@ describe("skilify SessionStart injection (per-agent bundles)", () => {
       // The const must resolve to the unified hivemind dispatcher one level
       // above each agent's bundle dir: <root>/<agent>/bundle/../../bundle/cli.js
       expect(text).toMatch(/HIVEMIND_CLI\s*=\s*join\d*\(\s*__bundleDir\s*,\s*"\.\.",\s*"\.\.",\s*"bundle",\s*"cli\.js"\s*\)/);
+    }
+  );
+});
+
+describe("skilify discoverability on non-bundle agent surfaces (Pi + OpenClaw)", () => {
+  it.each(NON_BUNDLE_SURFACES)("%s file exists", (_label, p) => {
+    expect(existsSync(p)).toBe(true);
+  });
+
+  it.each(NON_BUNDLE_SURFACES)(
+    "%s advertises the skilify family (SKILLS / Skill Management section)",
+    (_label, p) => {
+      const text = readFileSync(p, "utf-8");
+      // Pi uses "SKILLS (skilify)" inline in its CONTEXT_PREAMBLE; OpenClaw's
+      // SKILL.md uses a markdown "## Skill Management" header. Either is fine.
+      const hasHeader =
+        text.includes("SKILLS (skilify)") ||
+        text.includes("Skill Management") ||
+        text.includes("Skill management");
+      expect(hasHeader).toBe(true);
+    }
+  );
+
+  it.each(NON_BUNDLE_SURFACES)(
+    "%s lists the high-value skilify pull invocations",
+    (_label, p) => {
+      const text = readFileSync(p, "utf-8");
+      expect(text).toMatch(/skilify pull/);
+      expect(text).toMatch(/skilify pull --user/);
+      expect(text).toMatch(/skilify pull --users/);
+      expect(text).toMatch(/skilify pull --all-users/);
+      expect(text).toMatch(/skilify pull --dry-run/);
+      expect(text).toMatch(/skilify scope/);
+      expect(text).toMatch(/skilify team/);
     }
   );
 });
