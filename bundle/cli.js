@@ -4541,7 +4541,7 @@ async function runAuthCommand(args) {
         process.exit(1);
       }
       const ws = await listWorkspaces(creds.token, apiUrl, creds.orgId);
-      ws.forEach((w) => console.log(`${w.id}  ${w.name}`));
+      ws.forEach((w) => console.log(w.name || w.id));
       break;
     }
     case "workspace": {
@@ -4552,7 +4552,7 @@ async function runAuthCommand(args) {
       const sub = args[1];
       if (sub === "list") {
         const wsList = await listWorkspaces(creds.token, apiUrl, creds.orgId);
-        wsList.forEach((w) => console.log(`${w.id}  ${w.name}`));
+        wsList.forEach((w) => console.log(w.name || w.id));
         break;
       }
       if (sub === "switch") {
