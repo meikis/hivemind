@@ -21,7 +21,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export type Agent = "claude_code" | "codex" | "cursor" | "hermes";
+export type Agent = "claude_code" | "codex" | "cursor" | "hermes" | "pi";
 
 export interface GateRunOptions {
   agent: Agent;
@@ -34,6 +34,10 @@ export interface GateRunOptions {
   hermesProvider?: string;
   /** hermes only — model passed to -m */
   hermesModel?: string;
+  /** pi only — provider passed to --provider (default "google") */
+  piProvider?: string;
+  /** pi only — model passed to --model (default "gemini-2.5-flash") */
+  piModel?: string;
   /** Max wall-clock for the CLI call; default 120s. */
   timeoutMs?: number;
 }
@@ -71,6 +75,8 @@ export function findAgentBin(agent: Agent): string {
       return which("cursor-agent") ?? "/usr/local/bin/cursor-agent";
     case "hermes":
       return which("hermes") ?? join(homedir(), ".local", "bin", "hermes");
+    case "pi":
+      return which("pi") ?? join(homedir(), ".local", "bin", "pi");
   }
 }
 
@@ -104,6 +110,13 @@ function buildArgs(agent: Agent, prompt: string, opts: GateRunOptions): string[]
         "-m", opts.hermesModel ?? process.env.HIVEMIND_HERMES_MODEL ?? "anthropic/claude-haiku-4-5",
         "--yolo",
         "--ignore-user-config",
+      ];
+    case "pi":
+      return [
+        "--print",
+        "--provider", opts.piProvider ?? process.env.HIVEMIND_PI_PROVIDER ?? "google",
+        "--model", opts.piModel ?? process.env.HIVEMIND_PI_MODEL ?? "gemini-2.5-flash",
+        prompt,
       ];
   }
 }

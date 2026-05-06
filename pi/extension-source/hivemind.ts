@@ -421,16 +421,6 @@ function deriveSkilifyProjectKey(cwd: string): { key: string; project: string } 
   return { key, project };
 }
 
-function tryAcquireSkilifyWorkerLock(projectKey: string): boolean {
-  try {
-    mkdirSync(SKILIFY_STATE_DIR, { recursive: true });
-    const lockPath = join(SKILIFY_STATE_DIR, `${projectKey}.worker.lock`);
-    const fd = openSync(lockPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY);
-    closeSync(fd);
-    return true;
-  } catch { return false; }
-}
-
 function spawnPiSkilifyWorker(creds: Creds, sessionId: string, cwd: string): void {
   if (!existsSync(PI_SKILIFY_WORKER_PATH)) {
     logHm(`spawnPiSkilifyWorker: no worker at ${PI_SKILIFY_WORKER_PATH} — install via 'hivemind pi install' or rebuild`);
@@ -438,14 +428,14 @@ function spawnPiSkilifyWorker(creds: Creds, sessionId: string, cwd: string): voi
   }
   const { key: projectKey, project } = deriveSkilifyProjectKey(cwd);
 
-  // Lock keyed on projectKey: a second session_shutdown for the same project
-  // while a worker is still mining must skip rather than race. The worker
-  // releases the lock when it finishes (or via stale-lock cleanup at next
-  // run — same model as the CC/Codex worker).
-  if (!tryAcquireSkilifyWorkerLock(projectKey)) {
-    logHm(`spawnPiSkilifyWorker: lock held for ${projectKey} — skipping`);
-    return;
-  }
+  // No spawn-side lock: the worker itself acquires `<projectKey>.lock` via
+  // src/skilify/state.ts:tryAcquireWorkerLock and releases it on exit (with
+  // a 10-min stale-lock fallback). A spawn-side lock here would create a
+  // SECOND lockfile (`<projectKey>.worker.lock`) that nobody releases,
+  // permanently blocking subsequent spawns from the same Pi runtime
+  // instance. Let the worker's own lock be the single source of truth;
+  // back-to-back spawns where a worker is in flight cost only one extra
+  // node cold-start (~50ms) before the worker self-skips on the lock.
 
   const tmpDir = join(tmpdir(), `deeplake-skilify-${projectKey}-${Date.now()}`);
   try { mkdirSync(tmpDir, { recursive: true, mode: 0o700 }); }
@@ -477,6 +467,9 @@ function spawnPiSkilifyWorker(creds: Creds, sessionId: string, cwd: string): voi
     cursorModel: process.env.HIVEMIND_CURSOR_MODEL,
     hermesProvider: process.env.HIVEMIND_HERMES_PROVIDER,
     hermesModel: process.env.HIVEMIND_HERMES_MODEL,
+    // pi-specific gate args — match wikiWorker config defaults (google + gemini-2.5-flash)
+    piProvider: process.env.HIVEMIND_PI_PROVIDER ?? "google",
+    piModel: process.env.HIVEMIND_PI_MODEL ?? "gemini-2.5-flash",
     skilifyLog: join(homedir(), ".deeplake", "hivemind-pi-skilify.log"),
     currentSessionId: sessionId,
   };

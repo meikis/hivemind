@@ -55,6 +55,8 @@ interface WorkerConfig {
   cursorModel?: string;
   hermesProvider?: string;
   hermesModel?: string;
+  piProvider?: string;
+  piModel?: string;
   skilifyLog: string;
   currentSessionId?: string;
 }
@@ -354,6 +356,8 @@ async function main(): Promise<void> {
       cursorModel: cfg.cursorModel,
       hermesProvider: cfg.hermesProvider,
       hermesModel: cfg.hermesModel,
+      piProvider: cfg.piProvider,
+      piModel: cfg.piModel,
       timeoutMs: 120_000,
     });
     // Always persist stdout/stderr for debugging

@@ -77,6 +77,8 @@ export function spawnSkilifyWorker(opts: SkilifySpawnOptions): void {
     cursorModel: process.env.HIVEMIND_CURSOR_MODEL,
     hermesProvider: process.env.HIVEMIND_HERMES_PROVIDER,
     hermesModel: process.env.HIVEMIND_HERMES_MODEL,
+    piProvider: process.env.HIVEMIND_PI_PROVIDER,
+    piModel: process.env.HIVEMIND_PI_MODEL,
     skilifyLog: SKILIFY_LOG,
     currentSessionId,
   }), { mode: 0o600 });
