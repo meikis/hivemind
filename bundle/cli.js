@@ -4514,6 +4514,16 @@ async function runAuthCommand(args) {
         }
         await switchOrg(match.id, match.name);
         console.log(`Switched to org: ${match.name}`);
+        const prevWs = creds.workspaceId ?? "default";
+        const wsList = await listWorkspaces(creds.token, apiUrl, match.id);
+        const stillThere = wsList.some((w) => w.id === prevWs || w.name.toLowerCase() === prevWs.toLowerCase());
+        if (!stillThere) {
+          await switchWorkspace("default");
+          console.log(`Workspace '${prevWs}' is not in org '${match.name}'. Reset workspace to 'default'.`);
+          if (wsList.length > 0) {
+            console.log(`Available workspaces: ${wsList.map((w) => w.name || w.id).join(", ")}`);
+          }
+        }
       } else {
         console.log("Usage: org list | org switch <name-or-id>");
       }
@@ -4533,14 +4543,33 @@ async function runAuthCommand(args) {
         console.log("Not logged in.");
         process.exit(1);
       }
-      const wsId = args[1];
-      if (!wsId) {
-        console.log("Usage: workspace <id>");
-        process.exit(1);
+      const sub = args[1];
+      if (sub === "list") {
+        const wsList = await listWorkspaces(creds.token, apiUrl, creds.orgId);
+        wsList.forEach((w) => console.log(`${w.id}  ${w.name}`));
+        break;
       }
-      await switchWorkspace(wsId);
-      console.log(`Switched to workspace: ${wsId}`);
-      break;
+      if (sub === "switch") {
+        const target = args[2];
+        if (!target) {
+          console.log("Usage: workspace switch <name-or-id>");
+          process.exit(1);
+        }
+        const wsList = await listWorkspaces(creds.token, apiUrl, creds.orgId);
+        const match = wsList.find((w) => w.id === target || w.name.toLowerCase() === target.toLowerCase());
+        if (!match) {
+          console.log(`Workspace not found: ${target}`);
+          if (wsList.length > 0) {
+            console.log(`Available workspaces: ${wsList.map((w) => w.name || w.id).join(", ")}`);
+          }
+          process.exit(1);
+        }
+        await switchWorkspace(match.id);
+        console.log(`Switched to workspace: ${match.name || match.id}`);
+        break;
+      }
+      console.log("Usage: workspace list | workspace switch <name-or-id>");
+      process.exit(1);
     }
     case "invite": {
       if (!creds) {
@@ -4681,7 +4710,8 @@ Account / org / workspace:
   hivemind org list                        List organizations.
   hivemind org switch <name-or-id>         Switch active organization.
   hivemind workspaces                      List workspaces in current org.
-  hivemind workspace <id>                  Switch active workspace.
+  hivemind workspace list                  List workspaces (alias of 'workspaces').
+  hivemind workspace switch <name-or-id>   Switch active workspace.
   hivemind members                         List org members.
   hivemind invite <email> <ADMIN|WRITE|READ>  Invite a teammate.
   hivemind remove <user-id>                Remove a member.
