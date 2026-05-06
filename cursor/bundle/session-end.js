@@ -282,7 +282,7 @@ function skilifyLog(msg) {
 function spawnSkilifyWorker(opts) {
   const { config, cwd, projectKey, project, bundleDir, agent, scopeConfig, currentSessionId, reason } = opts;
   const tmpDir = join7(tmpdir2(), `deeplake-skilify-${projectKey}-${Date.now()}`);
-  mkdirSync4(tmpDir, { recursive: true });
+  mkdirSync4(tmpDir, { recursive: true, mode: 448 });
   const gateBin = findAgentBin(agent);
   const configFile = join7(tmpDir, "config.json");
   writeFileSync3(configFile, JSON.stringify({
