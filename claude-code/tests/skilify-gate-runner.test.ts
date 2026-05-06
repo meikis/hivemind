@@ -3,7 +3,7 @@ import { runGate, findAgentBin, type Agent } from "../../src/skilify/gate-runner
 
 describe("findAgentBin", () => {
   it("returns a path for each known agent (PATH lookup or fallback)", () => {
-    for (const agent of ["claude_code", "codex", "cursor", "hermes"] as Agent[]) {
+    for (const agent of ["claude_code", "codex", "cursor", "hermes", "pi"] as Agent[]) {
       const p = findAgentBin(agent);
       expect(p).toBeTruthy();
       expect(typeof p).toBe("string");
@@ -69,6 +69,60 @@ describe("runGate dispatch", () => {
     expect(r.stdout).toContain("claude-sonnet-4-5");
     expect(r.stdout).toContain("--force");
     expect(r.stdout).toContain("PROMPT_MARKER");
+  });
+
+  it("constructs pi invocation with --print + --provider + --model", () => {
+    const r = runGate({
+      agent: "pi",
+      prompt: "PROMPT_MARKER",
+      bin: "/usr/bin/echo",
+      piProvider: "google",
+      piModel: "gemini-2.5-flash",
+      timeoutMs: 5_000,
+    });
+    expect(r.errored).toBe(false);
+    expect(r.stdout).toContain("--print");
+    expect(r.stdout).toContain("--provider");
+    expect(r.stdout).toContain("google");
+    expect(r.stdout).toContain("--model");
+    expect(r.stdout).toContain("gemini-2.5-flash");
+    expect(r.stdout).toContain("PROMPT_MARKER");
+  });
+
+  it("pi falls back to env var defaults for provider + model when explicit override absent", () => {
+    const original = {
+      provider: process.env.HIVEMIND_PI_PROVIDER,
+      model: process.env.HIVEMIND_PI_MODEL,
+    };
+    try {
+      process.env.HIVEMIND_PI_PROVIDER = "test-pi-provider";
+      process.env.HIVEMIND_PI_MODEL = "test-pi-model";
+      const r = runGate({ agent: "pi", prompt: "p", bin: "/usr/bin/echo" });
+      expect(r.stdout).toContain("test-pi-provider");
+      expect(r.stdout).toContain("test-pi-model");
+    } finally {
+      if (original.provider === undefined) delete process.env.HIVEMIND_PI_PROVIDER;
+      else process.env.HIVEMIND_PI_PROVIDER = original.provider;
+      if (original.model === undefined) delete process.env.HIVEMIND_PI_MODEL;
+      else process.env.HIVEMIND_PI_MODEL = original.model;
+    }
+  });
+
+  it("pi uses google + gemini-2.5-flash defaults when neither opts nor env are set", () => {
+    const original = {
+      provider: process.env.HIVEMIND_PI_PROVIDER,
+      model: process.env.HIVEMIND_PI_MODEL,
+    };
+    try {
+      delete process.env.HIVEMIND_PI_PROVIDER;
+      delete process.env.HIVEMIND_PI_MODEL;
+      const r = runGate({ agent: "pi", prompt: "p", bin: "/usr/bin/echo" });
+      expect(r.stdout).toContain("google");
+      expect(r.stdout).toContain("gemini-2.5-flash");
+    } finally {
+      if (original.provider !== undefined) process.env.HIVEMIND_PI_PROVIDER = original.provider;
+      if (original.model !== undefined) process.env.HIVEMIND_PI_MODEL = original.model;
+    }
   });
 
   it("constructs hermes invocation with -z + --provider + -m + --yolo", () => {
