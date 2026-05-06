@@ -88,6 +88,24 @@ describe("welcomeRule — optional creds fallbacks", () => {
     expect(result?.body).toContain("org-only");
   });
 
+  it("falls back to 'your org' when both orgName AND orgId are missing", () => {
+    // The Credentials type marks orgId as required, so this can only happen
+    // with a malformed credentials.json. The fallback prevents the rendered
+    // body from reading "Connected to org undefined ...".
+    const result = welcomeRule.evaluate({
+      agent: "claude-code",
+      creds: {
+        ...baseCreds,
+        orgName: undefined,
+        orgId: undefined as any, // simulate malformed creds
+        userName: "u",
+      },
+      state: { shown: {} },
+    });
+    expect(result?.body).toContain("your org");
+    expect(result?.body).not.toContain("undefined");
+  });
+
   it("falls back to 'default' workspace when workspaceId is missing", () => {
     const result = welcomeRule.evaluate({
       agent: "claude-code",
