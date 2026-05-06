@@ -21,6 +21,7 @@ const log = (msg: string) => _log("codex-session-start", msg);
 
 const __bundleDir = dirname(fileURLToPath(import.meta.url));
 const AUTH_CMD = join(__bundleDir, "commands", "auth-login.js");
+const HIVEMIND_CLI = join(__bundleDir, "..", "..", "bundle", "cli.js");
 
 const context = `DEEPLAKE MEMORY: Persistent memory at ~/.deeplake/memory/ shared across sessions, users, and agents.
 
@@ -38,7 +39,21 @@ Search workflow:
 ❌ grep without a summaries/ or sessions/ suffix — too noisy
 
 IMPORTANT: Only use bash builtins (cat, ls, grep, echo, jq, head, tail, sed, awk, etc.) on ~/.deeplake/memory/. Do NOT use python, python3, node, curl, or other interpreters — they are not available in the memory filesystem.
-Do NOT spawn subagents to read deeplake memory.`;
+Do NOT spawn subagents to read deeplake memory.
+
+SKILLS (skilify) — mine + share reusable skills across the org:
+- node "HIVEMIND_CLI" skilify                         — show scope/team/install + per-project state
+- node "HIVEMIND_CLI" skilify pull                    — sync project skills from the org table
+- node "HIVEMIND_CLI" skilify pull --user <email>     — only that author's skills
+- node "HIVEMIND_CLI" skilify pull --users a,b,c      — multiple authors (CSV)
+- node "HIVEMIND_CLI" skilify pull --all-users        — explicit "no author filter"
+- node "HIVEMIND_CLI" skilify pull --to project|global  — install location
+- node "HIVEMIND_CLI" skilify pull --dry-run          — preview only
+- node "HIVEMIND_CLI" skilify pull --force            — overwrite local (creates .bak)
+- node "HIVEMIND_CLI" skilify pull <skill-name>       — pull only that skill (combines with --user)
+- node "HIVEMIND_CLI" skilify scope <me|team|org>     — sharing scope for new skills
+- node "HIVEMIND_CLI" skilify install <project|global>  — default install location
+- node "HIVEMIND_CLI" skilify team add|remove|list <name>  — manage team list`;
 
 interface CodexSessionStartInput {
   session_id: string;
@@ -84,9 +99,10 @@ async function main(): Promise<void> {
     versionNotice = `\nHivemind v${current}`;
   }
 
+  const resolvedContext = context.replace(/HIVEMIND_CLI/g, HIVEMIND_CLI);
   const additionalContext = creds?.token
-    ? `${context}\nLogged in to Deeplake as org: ${creds.orgName ?? creds.orgId} (workspace: ${creds.workspaceId ?? "default"})${versionNotice}`
-    : `${context}\nNot logged in to Deeplake. Run: node "${AUTH_CMD}" login${versionNotice}`;
+    ? `${resolvedContext}\nLogged in to Deeplake as org: ${creds.orgName ?? creds.orgId} (workspace: ${creds.workspaceId ?? "default"})${versionNotice}`
+    : `${resolvedContext}\nNot logged in to Deeplake. Run: node "${AUTH_CMD}" login${versionNotice}`;
 
   // Codex SessionStart: plain text on stdout is added as developer context.
   // JSON { additionalContext } format is rejected by Codex 0.118.0.

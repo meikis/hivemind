@@ -31,13 +31,28 @@ const log = (msg: string) => _log("cursor-session-start", msg);
 
 const __bundleDir = dirname(fileURLToPath(import.meta.url));
 const AUTH_CMD = join(__bundleDir, "commands", "auth-login.js");
+const HIVEMIND_CLI = join(__bundleDir, "..", "..", "bundle", "cli.js");
 
 const context = `DEEPLAKE MEMORY: Persistent memory at ~/.deeplake/memory/ shared across sessions, users, and agents.
 
 Structure: index.md (start here) → summaries/*.md → sessions/*.jsonl (last resort). Do NOT jump straight to JSONL.
 Search: use \`grep\` (NOT \`rg\`/ripgrep). Example: grep -ri "keyword" ~/.deeplake/memory/
 IMPORTANT: Only use these bash builtins to interact with ~/.deeplake/memory/: cat, ls, grep, echo, jq, head, tail, sed, awk, wc, sort, find. Do NOT use rg/ripgrep, python, python3, node, curl, or other interpreters — they may not be installed and the memory filesystem only supports the listed builtins.
-Do NOT spawn subagents to read deeplake memory.`;
+Do NOT spawn subagents to read deeplake memory.
+
+SKILLS (skilify) — mine + share reusable skills across the org:
+- node "HIVEMIND_CLI" skilify                         — show scope/team/install + per-project state
+- node "HIVEMIND_CLI" skilify pull                    — sync project skills from the org table
+- node "HIVEMIND_CLI" skilify pull --user <email>     — only that author's skills
+- node "HIVEMIND_CLI" skilify pull --users a,b,c      — multiple authors (CSV)
+- node "HIVEMIND_CLI" skilify pull --all-users        — explicit "no author filter"
+- node "HIVEMIND_CLI" skilify pull --to project|global  — install location
+- node "HIVEMIND_CLI" skilify pull --dry-run          — preview only
+- node "HIVEMIND_CLI" skilify pull --force            — overwrite local (creates .bak)
+- node "HIVEMIND_CLI" skilify pull <skill-name>       — pull only that skill (combines with --user)
+- node "HIVEMIND_CLI" skilify scope <me|team|org>     — sharing scope for new skills
+- node "HIVEMIND_CLI" skilify install <project|global>  — default install location
+- node "HIVEMIND_CLI" skilify team add|remove|list <name>  — manage team list`;
 
 interface CursorSessionStartInput {
   session_id?: string;
@@ -135,9 +150,10 @@ async function main(): Promise<void> {
   const current = getInstalledVersion(__bundleDir, ".claude-plugin");
   if (current) versionNotice = `\nHivemind v${current}`;
 
+  const resolvedContext = context.replace(/HIVEMIND_CLI/g, HIVEMIND_CLI);
   const additionalContext = creds?.token
-    ? `${context}\nLogged in to Deeplake as org: ${creds.orgName ?? creds.orgId} (workspace: ${creds.workspaceId ?? "default"})${versionNotice}`
-    : `${context}\nNot logged in to Deeplake. Run: node "${AUTH_CMD}" login${versionNotice}`;
+    ? `${resolvedContext}\nLogged in to Deeplake as org: ${creds.orgName ?? creds.orgId} (workspace: ${creds.workspaceId ?? "default"})${versionNotice}`
+    : `${resolvedContext}\nNot logged in to Deeplake. Run: node "${AUTH_CMD}" login${versionNotice}`;
 
   console.log(JSON.stringify({ additional_context: additionalContext }));
 }
