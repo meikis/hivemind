@@ -329,7 +329,15 @@ async function main(): Promise<void> {
 
     if (allPairs.length === 0) {
       wlog("no prompt/answer pairs after extraction — advancing watermark and exiting");
-      advanceWatermark(cfg.projectKey, usable[0].path, usable[0].lastMsg);
+      // Watermark = OLDEST mined session, not newest. SQL ORDERS sessions
+      // DESC, then we LIMIT N. If we set the watermark to the newest, any
+      // session older than the LIMIT cutoff is permanently skipped on the
+      // next run. Setting it to the oldest mined session means the next run
+      // will re-see the same N (probably yielding SKIP) but ALSO see anything
+      // older that we missed in this batch. Re-mining is benign — same input
+      // → SKIP, no new DB row.
+      const oldest = usable[usable.length - 1];
+      advanceWatermark(cfg.projectKey, oldest.path, oldest.lastMsg);
       return;
     }
 
@@ -364,15 +372,22 @@ async function main(): Promise<void> {
     if (!verdict) {
       wlog(`no parseable verdict (${source}) — treating as SKIP, advancing watermark`);
       keepTmpForInspection = true;
-      advanceWatermark(cfg.projectKey, usable[0].path, usable[0].lastMsg);
+      const oldest = usable[usable.length - 1];
+      advanceWatermark(cfg.projectKey, oldest.path, oldest.lastMsg);
       return;
     }
     wlog(`verdict source: ${source}`);
 
     wlog(`verdict=${verdict.verdict} name=${verdict.name ?? "-"} reason=${verdict.reason ?? "-"}`);
 
-    const newestUuid = (usable[0].path.split("/").pop() ?? "").replace(/\.[^.]+$/, "");
-    const newestDate = usable[0].lastMsg;
+    // Watermark is the OLDEST mined session date — same reasoning as the
+    // no-pairs branch above: setting it to the newest would permanently
+    // skip any session older than the LIMIT cutoff that we couldn't fit
+    // into this batch. Re-mining the recent N on the next run is benign
+    // (gate yields SKIP).
+    const oldest = usable[usable.length - 1];
+    const watermarkUuid = (oldest.path.split("/").pop() ?? "").replace(/\.[^.]+$/, "");
+    const watermarkDate = oldest.lastMsg;
     const sourceSessions = usable.map(c =>
       (c.path.split("/").pop() ?? "").replace(/\.[^.]+$/, "")
     );
@@ -425,11 +440,11 @@ async function main(): Promise<void> {
           agent: cfg.agent,
         });
         wlog(`wrote new skill: ${result.path}`);
-        recordSkill(cfg.projectKey, verdict.name, newestUuid, newestDate);
+        recordSkill(cfg.projectKey, verdict.name, watermarkUuid, watermarkDate);
         await recordToDeeplake(result, verdict);
       } catch (e: any) {
         wlog(`writeNewSkill failed: ${e.message}`);
-        advanceWatermark(cfg.projectKey, newestUuid, newestDate);
+        advanceWatermark(cfg.projectKey, watermarkUuid, watermarkDate);
       }
     } else if (verdict.verdict === "MERGE" && verdict.name && verdict.body) {
       try {
@@ -442,7 +457,7 @@ async function main(): Promise<void> {
           agent: cfg.agent,
         });
         wlog(`merged into skill: ${result.path} (v${result.version})`);
-        recordSkill(cfg.projectKey, verdict.name, newestUuid, newestDate);
+        recordSkill(cfg.projectKey, verdict.name, watermarkUuid, watermarkDate);
         await recordToDeeplake(result, verdict);
       } catch (e: any) {
         // The gate sometimes hallucinates a MERGE target that exists in the
@@ -461,20 +476,20 @@ async function main(): Promise<void> {
               agent: cfg.agent,
             });
             wlog(`wrote new skill (merge fallback): ${result.path}`);
-            recordSkill(cfg.projectKey, verdict.name, newestUuid, newestDate);
+            recordSkill(cfg.projectKey, verdict.name, watermarkUuid, watermarkDate);
             await recordToDeeplake(result, verdict);
           } catch (e2: any) {
             wlog(`writeNewSkill fallback also failed: ${e2.message}`);
-            advanceWatermark(cfg.projectKey, newestUuid, newestDate);
+            advanceWatermark(cfg.projectKey, watermarkUuid, watermarkDate);
           }
         } else {
           wlog(`mergeSkill failed: ${e.message}`);
-          advanceWatermark(cfg.projectKey, newestUuid, newestDate);
+          advanceWatermark(cfg.projectKey, watermarkUuid, watermarkDate);
         }
       }
     } else {
       // SKIP, or KEEP/MERGE with missing fields — just advance watermark.
-      advanceWatermark(cfg.projectKey, newestUuid, newestDate);
+      advanceWatermark(cfg.projectKey, watermarkUuid, watermarkDate);
     }
   } catch (e: any) {
     wlog(`fatal: ${e.message}`);
