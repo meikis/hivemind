@@ -11,6 +11,15 @@ jobs:
   release:
     name: Auto-bump version and create release
     runs-on: ubuntu-latest
+    outputs:
+      # Set only when the Create GitHub Release step actually runs.
+      # The downstream `publish` job gates on this so it fires once
+      # per real release — and crucially fires in the SAME workflow
+      # run as the bump+release, because pushes made with the default
+      # GITHUB_TOKEN do not retrigger workflows.
+      published: ${{ steps.set_outputs.outputs.published }}
+      sha: ${{ steps.set_outputs.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -130,16 +139,30 @@ jobs:
           body: ${{ steps.pr.outputs.body }}
           generate_release_notes: false
 
+      - name: Set outputs for publish job
+        # Captures the local HEAD SHA after the bump+push (or the
+        # untouched HEAD on the manual-bump path). The publish job
+        # checks out this SHA explicitly, so an in-flight `main`
+        # advance during the environment-approval pause cannot
+        # redirect the publish to an unreviewed commit.
+        id: set_outputs
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          echo "published=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   publish:
     # Publish @deeplake/hivemind to npm and the openclaw bundle to ClawHub.
-    # Runs only on the bump-commit retrigger (so we publish exactly the
-    # version that was just released to GitHub) and pauses at the
-    # `production` environment gate for human approval before tokens are
-    # accessible. Tokens live as environment-scoped secrets, so PRs from
-    # forks and unprotected branches cannot reach them.
+    # Runs in the SAME workflow run as `release` (gated on its
+    # `published` output) because the bump-commit push uses the
+    # default GITHUB_TOKEN, which by GitHub's loop-prevention rule
+    # does not retrigger workflows. Pauses at the `production`
+    # environment gate for human approval before tokens are
+    # accessible. Tokens live as environment-scoped secrets, so PRs
+    # from forks and unprotected branches cannot reach them.
     name: Publish to npm + ClawHub
     needs: release
-    if: "${{ startsWith(github.event.head_commit.message, 'chore: bump version') }}"
+    if: needs.release.outputs.published == 'true'
     runs-on: ubuntu-latest
     environment: production
     permissions:
@@ -151,10 +174,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Pull the latest main HEAD: the push event's SHA may point at
-          # the pre-bump commit, but the `release` job above just pushed
-          # the bump commit — that's the version we want to publish.
-          ref: main
+          # Pin to the bump commit captured by the release job. Pinning
+          # to a SHA (not `main`) is required: the `production`
+          # environment gate can pause for hours, during which `main`
+          # may advance — checking out a moving ref would publish a
+          # commit the reviewer never approved.
+          ref: ${{ needs.release.outputs.sha }}
           fetch-depth: 1
 
       - name: Setup Node.js
@@ -178,24 +203,7 @@ jobs:
         run: npm run build
 
       - name: Pack-check (refuse forbidden filenames in tarball)
-        run: |
-          npm pack --dry-run --json > /tmp/pack.json
-          node -e "
-            const entries = JSON.parse(require('fs').readFileSync('/tmp/pack.json','utf8'))[0].files.map(f => f.path);
-            const forbidden = entries.filter(p =>
-              /(^|\/)\.npmrc$/.test(p) ||
-              /(^|\/)\.env(\$|\.)/.test(p) ||
-              /(^|\/)secrets?(\/|\$)/.test(p) ||
-              /(^|\/)\.github(\/|\$)/.test(p) ||
-              /(^|\/)\.git(\/|\$)/.test(p)
-            );
-            if (forbidden.length) {
-              console.error('Refusing to publish — forbidden filenames in tarball:');
-              for (const f of forbidden) console.error('  ' + f);
-              process.exit(1);
-            }
-            console.log('Pack-check OK — ' + entries.length + ' files, no forbidden patterns');
-          "
+        run: npm run pack:check
 
       - name: Publish to npm with Sigstore provenance
         # --provenance uses the GitHub OIDC token (id-token: write above)
