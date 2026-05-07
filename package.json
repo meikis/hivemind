@@ -1,8 +1,12 @@
 {
   "name": "@deeplake/hivemind",
-  "version": "0.7.6",
+  "version": "0.7.9",
   "description": "Cloud-backed persistent shared memory for AI agents powered by Deeplake",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/activeloopai/hivemind.git"
+  },
   "publishConfig": {
     "access": "public"
   },
@@ -35,6 +39,7 @@
     "typecheck": "tsc --noEmit",
     "dup": "jscpd src",
     "audit:openclaw": "node scripts/audit-openclaw-bundle.mjs",
+    "pack:check": "node scripts/pack-check.mjs",
     "ci": "npm run typecheck && npm run dup && npm test",
     "prepare": "husky",
     "prepublishOnly": "npm run build"
