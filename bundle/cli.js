@@ -5491,8 +5491,7 @@ async function unpullSkills(args) {
   const all = takeBooleanFlag(work, "--all");
   const legacyCleanup = takeBooleanFlag(work, "--legacy-cleanup");
   if (toRaw !== "project" && toRaw !== "global") {
-    console.error(`Invalid --to '${toRaw}'. Use 'project' or 'global'.`);
-    process.exit(1);
+    throw new Error(`Invalid --to '${toRaw}'. Use 'project' or 'global'.`);
   }
   let users = [];
   if (userOne)
@@ -5501,8 +5500,7 @@ async function unpullSkills(args) {
     users = usersMany.split(",").map((s) => s.trim()).filter(Boolean);
   const config = loadConfig();
   if (!config) {
-    console.error("Not logged in. Run: hivemind login");
-    process.exit(1);
+    throw new Error("Not logged in. Run: hivemind login");
   }
   const summary = runUnpull({
     install: toRaw,
@@ -5568,6 +5566,7 @@ function runSkilifyCommand(args) {
     unpullSkills(args.slice(1)).catch((e) => {
       console.error(`unpull error: ${e?.message ?? e}`);
       process.exit(1);
+    }).catch(() => {
     });
     return;
   }
