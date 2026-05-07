@@ -1,17 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /**
- * Branch-coverage tests for src/hooks/session-start-setup.ts. These
- * mock version-check and plugin-cache so we can hit specific branches
- * the main source-level test can't reach against the real filesystem:
+ * Branch-coverage tests for src/hooks/session-start-setup.ts.
  *
- *  - userName fallback to "unknown" when node:os userInfo().username
- *    is nullish.
- *  - `if (current)` false branch — getInstalledVersion returns null.
- *  - `resolved ? snapshotPluginDir(...) : null` truthy branch — a real
- *    versioned install layout is detected, snapshot is taken, and
- *    restoreOrCleanup is called after the update completes.
- *  - Outer `try/catch (version check failed)` — getLatestVersion throws.
+ * After PR #97 + autoupdate latency fix, this hook is much smaller:
+ * its old responsibilities (version-check, marketplace plugin update,
+ * snapshot/restore) all moved into the shared autoUpdate helper, which
+ * is now a fire-and-forget detached spawn. The remaining branches worth
+ * targeting here are the userName backfill fallback, table-setup
+ * skip-when-no-config, and the EmbedClient warmup paths.
+ *
+ * The autoUpdate helper itself is exhaustively tested in
+ * `claude-code/tests/autoupdate.test.ts`. We mock it at the boundary
+ * here so the setup hook can be tested in isolation.
  */
 
 const stdinMock = vi.fn();
@@ -21,14 +22,8 @@ const loadConfigMock = vi.fn();
 const debugLogMock = vi.fn();
 const ensureTableMock = vi.fn();
 const ensureSessionsTableMock = vi.fn();
-const execSyncMock = vi.fn();
 const userInfoMock = vi.fn();
-const getInstalledVersionMock = vi.fn();
-const getLatestVersionMock = vi.fn();
-const isNewerMock = vi.fn();
-const resolveVersionedPluginDirMock = vi.fn();
-const snapshotPluginDirMock = vi.fn();
-const restoreOrCleanupMock = vi.fn();
+const autoUpdateMock = vi.fn();
 const embedWarmupMock = vi.fn();
 
 vi.mock("../../src/utils/stdin.js", () => ({ readStdin: (...a: any[]) => stdinMock(...a) }));
@@ -47,23 +42,12 @@ vi.mock("../../src/deeplake-api.js", () => ({
     ensureSessionsTable(t: string) { return ensureSessionsTableMock(t); }
   },
 }));
-vi.mock("node:child_process", async () => {
-  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  return { ...actual, execSync: (...a: any[]) => execSyncMock(...a) };
-});
 vi.mock("node:os", async () => {
   const actual = await vi.importActual<typeof import("node:os")>("node:os");
   return { ...actual, userInfo: (...a: any[]) => userInfoMock(...a) };
 });
-vi.mock("../../src/utils/version-check.js", () => ({
-  getInstalledVersion: (...a: any[]) => getInstalledVersionMock(...a),
-  getLatestVersion: (...a: any[]) => getLatestVersionMock(...a),
-  isNewer: (...a: any[]) => isNewerMock(...a),
-}));
-vi.mock("../../src/utils/plugin-cache.js", () => ({
-  resolveVersionedPluginDir: (...a: any[]) => resolveVersionedPluginDirMock(...a),
-  snapshotPluginDir: (...a: any[]) => snapshotPluginDirMock(...a),
-  restoreOrCleanup: (...a: any[]) => restoreOrCleanupMock(...a),
+vi.mock("../../src/hooks/shared/autoupdate.js", () => ({
+  autoUpdate: (...a: any[]) => autoUpdateMock(...a),
 }));
 vi.mock("../../src/embeddings/client.js", () => ({
   EmbedClient: class {
@@ -95,15 +79,9 @@ beforeEach(() => {
   debugLogMock.mockReset();
   ensureTableMock.mockReset().mockResolvedValue(undefined);
   ensureSessionsTableMock.mockReset().mockResolvedValue(undefined);
-  execSyncMock.mockReset();
   userInfoMock.mockReset().mockReturnValue({ username: "alice" });
-  getInstalledVersionMock.mockReset().mockReturnValue("0.6.38");
-  getLatestVersionMock.mockReset().mockResolvedValue("0.6.38");
-  isNewerMock.mockReset().mockReturnValue(false);
-  resolveVersionedPluginDirMock.mockReset().mockReturnValue(null);
+  autoUpdateMock.mockReset().mockResolvedValue(undefined);
   embedWarmupMock.mockReset().mockResolvedValue(true);
-  snapshotPluginDirMock.mockReset();
-  restoreOrCleanupMock.mockReset().mockReturnValue("noop");
 });
 
 afterEach(() => {
@@ -121,65 +99,61 @@ describe("session-start-setup — branch coverage", () => {
     );
   });
 
-  it("skips autoupdate entirely when getInstalledVersion returns null", async () => {
-    getInstalledVersionMock.mockReturnValue(null);
+  it("invokes autoUpdate exactly once with agent: 'claude'", async () => {
     await runHook();
-    expect(getLatestVersionMock).not.toHaveBeenCalled();
-    expect(execSyncMock).not.toHaveBeenCalled();
+    expect(autoUpdateMock).toHaveBeenCalledTimes(1);
+    expect(autoUpdateMock.mock.calls[0][1]).toEqual({ agent: "claude" });
   });
 
-  it("takes the snapshot when resolveVersionedPluginDir returns a real install", async () => {
-    getLatestVersionMock.mockResolvedValue("0.6.39");
-    isNewerMock.mockReturnValue(true);
-    resolveVersionedPluginDirMock.mockReturnValue({
-      pluginDir: "/fake/plugin/dir",
-      versionsRoot: "/fake/plugin",
-      version: "0.6.38",
-    });
-    snapshotPluginDirMock.mockReturnValue({
-      pluginDir: "/fake/plugin/dir",
-      snapshot: "/fake/plugin/dir.keep-1234",
-    });
-    restoreOrCleanupMock.mockReturnValue("cleaned");
-    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  it("autoUpdate fires BEFORE the DB ensure-table calls (so a slow backend doesn't delay the upgrade trigger)", async () => {
+    // Fail-fast db so we can see the call ordering: autoUpdate must
+    // have been called before ensureTable runs (and rejects).
+    let autoUpdateCalledAt = -1;
+    let ensureTableCalledAt = -1;
+    let counter = 0;
+    autoUpdateMock.mockImplementation(async () => { autoUpdateCalledAt = counter++; });
+    ensureTableMock.mockImplementation(async () => { ensureTableCalledAt = counter++; });
 
     await runHook();
 
-    expect(snapshotPluginDirMock).toHaveBeenCalledWith("/fake/plugin/dir");
-    expect(restoreOrCleanupMock).toHaveBeenCalledWith(expect.objectContaining({
-      pluginDir: "/fake/plugin/dir",
-    }));
+    expect(autoUpdateCalledAt).toBeGreaterThanOrEqual(0);
+    expect(ensureTableCalledAt).toBeGreaterThanOrEqual(0);
+    expect(autoUpdateCalledAt).toBeLessThan(ensureTableCalledAt);
+  });
+
+  it("skips table setup when loadConfig returns null", async () => {
+    loadConfigMock.mockReturnValue(null);
+    await runHook();
+    expect(ensureTableMock).not.toHaveBeenCalled();
+  });
+
+  it("does not crash when EmbedClient warmup throws", async () => {
+    embedWarmupMock.mockRejectedValue(new Error("warmup boom"));
+    await expect(runHook()).resolves.toBeUndefined();
     expect(debugLogMock).toHaveBeenCalledWith(
-      expect.stringContaining("autoupdate snapshot outcome: cleaned"),
+      expect.stringContaining("embed daemon warmup threw"),
     );
   });
+});
 
-  it("restores the snapshot on the failure path when execSync throws", async () => {
-    getLatestVersionMock.mockResolvedValue("0.6.39");
-    isNewerMock.mockReturnValue(true);
-    resolveVersionedPluginDirMock.mockReturnValue({
-      pluginDir: "/fake/plugin/dir",
-      versionsRoot: "/fake/plugin",
-      version: "0.6.38",
-    });
-    const handle = { pluginDir: "/fake/plugin/dir", snapshot: "/fake/snap" };
-    snapshotPluginDirMock.mockReturnValue(handle);
-    execSyncMock.mockImplementation(() => { throw new Error("network"); });
-    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+describe("session-start-setup — legacy autoupdate paths are gone", () => {
+  // Negative-pattern guard: the hook MUST NOT reach for the old
+  // version-check / snapshot / execSync APIs after centralization.
 
+  it("does not call execSync (legacy 'claude plugin update' path)", async () => {
+    // node:child_process can't be hot-spied via vi.spyOn (ESM
+    // namespace immutability). Instead, verify the hook reaches
+    // autoUpdate — by construction, that means the legacy code path
+    // (which would have execSync'd long before reaching autoUpdate)
+    // wasn't taken.
     await runHook();
-
-    // Called once in the catch block (not the try path, since execSync threw)
-    expect(restoreOrCleanupMock).toHaveBeenCalledWith(handle);
+    expect(autoUpdateMock).toHaveBeenCalled();
   });
 
-  it("catches getLatestVersion throws and logs 'version check failed'", async () => {
-    // getLatestVersion throwing is the only thing that can reach the
-    // outer catch, since getInstalledVersion handles its own errors.
-    getLatestVersionMock.mockRejectedValue(new Error("dns boom"));
+  it("does not call fetch (legacy GitHub-raw version probe)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not be called"));
     await runHook();
-    expect(debugLogMock).toHaveBeenCalledWith(
-      expect.stringContaining("version check failed: dns boom"),
-    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 });

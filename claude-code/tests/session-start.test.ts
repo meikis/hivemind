@@ -76,11 +76,9 @@ describe("claude-code: version detection from plugin.json", () => {
     expect(bundle).toContain("plugin.json");
   });
 
-  it("session-start-setup.js reads version from .claude-plugin/plugin.json", () => {
-    const bundle = readFileSync(join(bundleDir, "session-start-setup.js"), "utf-8");
-    expect(bundle).toContain(".claude-plugin");
-    expect(bundle).toContain("plugin.json");
-  });
+  // session-start-setup.js no longer reads .claude-plugin/plugin.json
+  // directly — version-check moved into the shared autoUpdate helper
+  // (fire-and-forget detached spawn). The hook just dispatches.
 
   it(".claude-plugin/plugin.json exists and has a version", () => {
     const pluginJsonPath = join(ccRoot, ".claude-plugin", "plugin.json");

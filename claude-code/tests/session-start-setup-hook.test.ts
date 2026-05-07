@@ -16,7 +16,7 @@ const loadConfigMock = vi.fn();
 const debugLogMock = vi.fn();
 const ensureTableMock = vi.fn();
 const ensureSessionsTableMock = vi.fn();
-const execSyncMock = vi.fn();
+const autoUpdateMock = vi.fn();
 const embedWarmupMock = vi.fn();
 
 vi.mock("../../src/utils/stdin.js", () => ({ readStdin: (...a: any[]) => stdinMock(...a) }));
@@ -35,10 +35,9 @@ vi.mock("../../src/deeplake-api.js", () => ({
     ensureSessionsTable(t: string) { return ensureSessionsTableMock(t); }
   },
 }));
-vi.mock("node:child_process", async () => {
-  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  return { ...actual, execSync: (...a: any[]) => execSyncMock(...a) };
-});
+vi.mock("../../src/hooks/shared/autoupdate.js", () => ({
+  autoUpdate: (...a: any[]) => autoUpdateMock(...a),
+}));
 vi.mock("../../src/embeddings/client.js", () => ({
   EmbedClient: class {
     async warmup() { return embedWarmupMock(); }
@@ -91,11 +90,11 @@ beforeEach(() => {
   debugLogMock.mockReset();
   ensureTableMock.mockReset().mockResolvedValue(undefined);
   ensureSessionsTableMock.mockReset().mockResolvedValue(undefined);
-  execSyncMock.mockReset();
+  autoUpdateMock.mockReset().mockResolvedValue(undefined);
   embedWarmupMock.mockReset().mockResolvedValue(true);
   fetchMock.mockReset().mockResolvedValue({
     ok: true,
-    json: async () => ({ version: "0.0.1" }), // same-as-current: no update
+    json: async () => ({ version: "0.0.1" }),
   });
 });
 
@@ -169,70 +168,35 @@ describe("session-start-setup hook — table setup", () => {
   });
 });
 
-describe("session-start-setup hook — version check + autoupdate", () => {
-  it("runs the autoupdate path when newer version is available", async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "999.0.0" }), // clearly newer
-    });
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+describe("session-start-setup hook — centralized autoupdate", () => {
+  // The autoUpdate helper is exhaustively tested in autoupdate.test.ts.
+  // Here we only verify the hook calls it correctly (right agent ID) and
+  // doesn't reach for the legacy version-check / execSync / GitHub-raw
+  // probe.
+
+  it("invokes autoUpdate exactly once with agent: 'claude'", async () => {
     await runHook();
-    expect(execSyncMock).toHaveBeenCalled();
-    expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining("auto-updated"),
-    );
+    expect(autoUpdateMock).toHaveBeenCalledTimes(1);
+    expect(autoUpdateMock.mock.calls[0][1]).toEqual({ agent: "claude" });
   });
 
-  it("emits a manual-upgrade message when autoupdate is disabled and newer exists", async () => {
-    loadCredsMock.mockReturnValue({
-      token: "t", orgId: "o", orgName: "acme", userName: "alice",
-      autoupdate: false,
-    });
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "999.0.0" }),
-    });
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  it("does not call fetch (legacy GitHub-raw version probe)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("should not be called"));
     await runHook();
-    expect(execSyncMock).not.toHaveBeenCalled();
-    expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining("update available"),
-    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 
-  it("emits the 'auto-update failed' message when execSync throws", async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ version: "999.0.0" }),
-    });
-    execSyncMock.mockImplementation(() => { throw new Error("npm down"); });
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  it("autoUpdate fires BEFORE the table-setup ensureTable call", async () => {
+    let autoUpdateAt = -1;
+    let ensureTableAt = -1;
+    let counter = 0;
+    autoUpdateMock.mockImplementation(async () => { autoUpdateAt = counter++; });
+    ensureTableMock.mockImplementation(async () => { ensureTableAt = counter++; });
     await runHook();
-    expect(stderrSpy).toHaveBeenCalledWith(
-      expect.stringContaining("Auto-update failed"),
-    );
-  });
-
-  it("logs 'up to date' when installed version matches latest", async () => {
-    // fetchMock default returns 0.0.1; getInstalledVersion reads plugin.json
-    // from the real filesystem, which will be 0.6.x. So we force the
-    // GitHub answer to match by returning ok=false → latest=null →
-    // falls through the else.
-    fetchMock.mockResolvedValue({ ok: false });
-    await runHook();
-    // The "version up to date" branch is reached when latest is non-null
-    // but not newer. Hard to hit deterministically without also mocking
-    // the file read; covering the fetch-error branch (ok=false → null)
-    // at least keeps the outer try from throwing.
-    // Assert we did not log an autoupdate:
-    expect(execSyncMock).not.toHaveBeenCalled();
-  });
-
-  it("tolerates a fetch error (GitHub unreachable)", async () => {
-    fetchMock.mockRejectedValue(new Error("network down"));
-    await runHook();
-    // Inner try/catch in getLatestVersion swallows; no autoupdate triggers.
-    expect(execSyncMock).not.toHaveBeenCalled();
+    expect(autoUpdateAt).toBeGreaterThanOrEqual(0);
+    expect(ensureTableAt).toBeGreaterThanOrEqual(0);
+    expect(autoUpdateAt).toBeLessThan(ensureTableAt);
   });
 });
 
@@ -285,35 +249,7 @@ describe("session-start-setup hook — fatal catch", () => {
   });
 });
 
-// Extra branch coverage: getLatestVersion edge cases + version-compare chain
-describe("session-start-setup hook — version helpers edge cases", () => {
-  it("treats fetch with ok:false as no-new-version (line 61 branch)", async () => {
-    fetchMock.mockResolvedValue({ ok: false, json: async () => ({ version: "999.0.0" }) });
-    await runHook();
-    expect(execSyncMock).not.toHaveBeenCalled();
-  });
-
-  it("treats a response missing the 'version' field as null (?? null fallback)", async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) });
-    await runHook();
-    expect(execSyncMock).not.toHaveBeenCalled();
-  });
-
-  it("treats latest == current as 'up to date' (isNewer false)", async () => {
-    // Force current to be a version that fetchMock exactly matches.
-    // We can't change what getInstalledVersion reads from disk, but we
-    // can make fetch return the installed version. With equal strings,
-    // isNewer returns false and the else-branch fires.
-    const pkg = JSON.parse(
-      require("node:fs").readFileSync(
-        require("node:path").join(
-          __dirname, "..", ".claude-plugin", "plugin.json",
-        ),
-        "utf-8",
-      ),
-    );
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ version: pkg.version }) });
-    await runHook();
-    expect(execSyncMock).not.toHaveBeenCalled();
-  });
-});
+// (Version-helper edge cases — fetch ok:false, missing version field,
+// isNewer comparison — are tested at the layer they belong to:
+// `src/cli/update.ts` and the autoUpdate helper itself, not in the
+// per-agent setup hook.)

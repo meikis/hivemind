@@ -617,8 +617,61 @@ function getInstalledVersion(bundleDir, pluginManifestDir) {
   return null;
 }
 
+// dist/src/hooks/shared/autoupdate.js
+import { spawn } from "node:child_process";
+import { existsSync as existsSync3 } from "node:fs";
+import { join as join6 } from "node:path";
+var log3 = (msg) => log("autoupdate", msg);
+var defaultSpawn = (cmd, args) => {
+  const child = spawn(cmd, args, {
+    detached: true,
+    stdio: "ignore"
+  });
+  child.unref();
+  child.on("error", () => {
+  });
+  return { pid: child.pid };
+};
+function findHivemindOnPath() {
+  const PATH = process.env.PATH ?? "";
+  const dirs = PATH.split(":").filter(Boolean);
+  for (const dir of dirs) {
+    const candidate = join6(dir, "hivemind");
+    if (existsSync3(candidate))
+      return candidate;
+  }
+  return null;
+}
+async function autoUpdate(creds, opts) {
+  const t0 = Date.now();
+  log3(`agent=${opts.agent} entered`);
+  if (!creds?.token) {
+    log3(`agent=${opts.agent} skip: no creds.token (${Date.now() - t0}ms)`);
+    return;
+  }
+  if (creds.autoupdate === false) {
+    log3(`agent=${opts.agent} skip: autoupdate=false (${Date.now() - t0}ms)`);
+    return;
+  }
+  const binaryPath = opts.hivemindBinaryPath !== void 0 ? opts.hivemindBinaryPath : findHivemindOnPath();
+  if (!binaryPath) {
+    log3(`agent=${opts.agent} skip: hivemind binary not on PATH (${Date.now() - t0}ms)`);
+    return;
+  }
+  log3(`agent=${opts.agent} binary=${binaryPath} \u2192 dispatching detached update`);
+  const spawnFn = opts.spawn ?? defaultSpawn;
+  let pid;
+  try {
+    pid = spawnFn(binaryPath, ["update"]).pid;
+  } catch (e) {
+    log3(`agent=${opts.agent} dispatch threw: ${e?.message ?? e} (${Date.now() - t0}ms)`);
+    return;
+  }
+  log3(`agent=${opts.agent} dispatched (pid=${pid ?? "?"}) (${Date.now() - t0}ms total)`);
+}
+
 // dist/src/hooks/hermes/session-start.js
-var log3 = (msg) => log("hermes-session-start", msg);
+var log4 = (msg) => log("hermes-session-start", msg);
 var __bundleDir = dirname2(fileURLToPath(import.meta.url));
 var context = `DEEPLAKE MEMORY: Persistent memory at ~/.deeplake/memory/ shared across sessions, users, and agents.
 
@@ -679,6 +732,7 @@ async function main() {
   const cwd = input.cwd ?? process.cwd();
   const creds = loadCredentials();
   const captureEnabled = process.env.HIVEMIND_CAPTURE !== "false";
+  await autoUpdate(creds, { agent: "hermes" });
   if (creds?.token && captureEnabled) {
     try {
       const config = loadConfig();
@@ -687,10 +741,10 @@ async function main() {
         await api.ensureTable();
         await api.ensureSessionsTable(config.sessionsTableName);
         await createPlaceholder(api, config.tableName, sessionId, cwd, config.userName, config.orgName, config.workspaceId);
-        log3("placeholder created");
+        log4("placeholder created");
       }
     } catch (e) {
-      log3(`placeholder failed: ${e.message}`);
+      log4(`placeholder failed: ${e.message}`);
     }
   }
   let versionNotice = "";
@@ -704,6 +758,6 @@ Not logged in to Deeplake. Run: hivemind login${versionNotice}`;
   console.log(JSON.stringify({ context: additional }));
 }
 main().catch((e) => {
-  log3(`fatal: ${e.message}`);
+  log4(`fatal: ${e.message}`);
   process.exit(0);
 });
