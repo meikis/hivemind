@@ -456,6 +456,59 @@ filters by your own username, `scope=team` filters by `author IN
 Config persists at `~/.deeplake/state/skilify/config.json` (one global
 file shared across projects).
 
+### `pull` / `unpull` — sharing skills across the org
+
+Once a teammate's skills are mined into the Deeplake `skills` table, you
+can install them locally with `pull`. Layout written to disk:
+
+```
+<root>/<name>--<author>/SKILL.md      ← pulled skills (e.g. deploy--alice/)
+<root>/<name>/SKILL.md                ← your locally-mined skills (flat, no suffix)
+```
+
+The `--<author>` suffix keeps cross-author entries with the same name
+disjoint and lets Claude Code's single-depth skill loader find pulled
+skills without any symlink trickery. `<root>` is `~/.claude/skills` for
+`--to global` and `<cwd>/.claude/skills` for `--to project`.
+
+```bash
+hivemind skilify pull                                # all authors, install globally
+hivemind skilify pull --user alice@example.com       # only this author
+hivemind skilify pull --users a@x.com,b@y.com        # multiple authors (CSV)
+hivemind skilify pull --all-users                    # explicit "no author filter" (default)
+hivemind skilify pull --to project                   # install under <cwd>/.claude/skills
+hivemind skilify pull --dry-run                      # preview, no disk writes
+hivemind skilify pull --force                        # overwrite even when local version >= remote
+hivemind skilify pull <skill-name>                   # pull only that skill (combinable with --user)
+```
+
+Every successful pull records an entry in
+`~/.deeplake/state/skilify/pulled.json`. That manifest is the source of
+truth for `unpull` — anything not in the manifest is **never** touched
+by default, even if its directory follows the `<name>--<author>` shape
+(this protects user-authored variant skills like `deploy--blue-green`).
+
+```bash
+hivemind skilify unpull                              # remove every pulled entry under the install scope
+hivemind skilify unpull --user alice@example.com     # remove only this author's pulls
+hivemind skilify unpull --users a@x.com,b@y.com      # multiple authors
+hivemind skilify unpull --not-mine                   # remove all pulls except your own
+hivemind skilify unpull --dry-run                    # preview, no disk writes
+hivemind skilify unpull --to project                 # operate on <cwd>/.claude/skills instead of global
+hivemind skilify unpull --all                        # ALSO remove flat-layout (locally-mined) skills — destructive
+hivemind skilify unpull --legacy-cleanup             # ALSO remove pre-`--author`-layout `<projectkey>/` dirs from older skilify versions
+```
+
+Drift handling: if a manifest entry's directory was deleted out-of-band
+(e.g. `rm -rf` by hand), the next `unpull` reports it as `manifest-orphan`
+and prunes the entry from the manifest without errors.
+
+Cross-project caveat: same `(name, author)` from two different projects
+collides on disk under the new flat layout — the more recently pulled
+row wins, and the prior `SKILL.md` is preserved as `SKILL.md.bak`. The
+underlying row stays in the Deeplake `skills` table, so re-pulling from
+the other project recovers it.
+
 ### Configuration
 
 | Env var                              | Default | Effect                                                  |
