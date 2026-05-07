@@ -4710,9 +4710,9 @@ if (process.argv[1] && process.argv[1].endsWith("auth-login.js")) {
 }
 
 // dist/src/commands/skilify.js
-import { readdirSync as readdirSync3, existsSync as existsSync15, readFileSync as readFileSync12, mkdirSync as mkdirSync7, renameSync as renameSync2 } from "node:fs";
-import { homedir as homedir8 } from "node:os";
-import { dirname as dirname2, join as join18 } from "node:path";
+import { readdirSync as readdirSync4, existsSync as existsSync17, readFileSync as readFileSync13, mkdirSync as mkdirSync8, renameSync as renameSync3 } from "node:fs";
+import { homedir as homedir10 } from "node:os";
+import { dirname as dirname3, join as join20 } from "node:path";
 
 // dist/src/skilify/scope-config.js
 import { existsSync as existsSync12, mkdirSync as mkdirSync4, readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
@@ -4740,9 +4740,9 @@ function saveScopeConfig(cfg) {
 }
 
 // dist/src/skilify/pull.js
-import { existsSync as existsSync14, readFileSync as readFileSync11, writeFileSync as writeFileSync8, mkdirSync as mkdirSync6, renameSync } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { join as join17 } from "node:path";
+import { existsSync as existsSync15, readFileSync as readFileSync12, writeFileSync as writeFileSync9, mkdirSync as mkdirSync7, renameSync as renameSync2 } from "node:fs";
+import { homedir as homedir8 } from "node:os";
+import { join as join18 } from "node:path";
 
 // dist/src/skilify/skill-writer.js
 import { existsSync as existsSync13, mkdirSync as mkdirSync5, readFileSync as readFileSync10, readdirSync as readdirSync2, statSync as statSync2, writeFileSync as writeFileSync7 } from "node:fs";
@@ -4805,7 +4805,97 @@ function parseFrontmatter(text) {
   return { fm, body };
 }
 
+// dist/src/skilify/manifest.js
+import { existsSync as existsSync14, mkdirSync as mkdirSync6, readFileSync as readFileSync11, renameSync, writeFileSync as writeFileSync8 } from "node:fs";
+import { homedir as homedir7 } from "node:os";
+import { dirname as dirname2, join as join17 } from "node:path";
+function emptyManifest() {
+  return { version: 1, entries: [] };
+}
+function manifestPath() {
+  return join17(homedir7(), ".deeplake", "state", "skilify", "pulled.json");
+}
+function loadManifest(path = manifestPath()) {
+  if (!existsSync14(path))
+    return emptyManifest();
+  let raw;
+  try {
+    raw = readFileSync11(path, "utf-8");
+  } catch {
+    return emptyManifest();
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object")
+      return emptyManifest();
+    if (parsed.version !== 1 || !Array.isArray(parsed.entries))
+      return emptyManifest();
+    const entries = [];
+    for (const e of parsed.entries) {
+      if (!e || typeof e !== "object")
+        continue;
+      if (typeof e.dirName !== "string" || !e.dirName)
+        continue;
+      if (typeof e.name !== "string" || !e.name)
+        continue;
+      if (typeof e.author !== "string")
+        continue;
+      if (typeof e.installRoot !== "string" || !e.installRoot)
+        continue;
+      if (e.install !== "global" && e.install !== "project")
+        continue;
+      entries.push({
+        dirName: e.dirName,
+        name: e.name,
+        author: e.author,
+        projectKey: typeof e.projectKey === "string" ? e.projectKey : "",
+        remoteVersion: typeof e.remoteVersion === "number" ? e.remoteVersion : 1,
+        install: e.install,
+        installRoot: e.installRoot,
+        pulledAt: typeof e.pulledAt === "string" ? e.pulledAt : (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
+    return { version: 1, entries };
+  } catch {
+    return emptyManifest();
+  }
+}
+function saveManifest(m, path = manifestPath()) {
+  mkdirSync6(dirname2(path), { recursive: true });
+  const tmp = `${path}.tmp`;
+  writeFileSync8(tmp, JSON.stringify(m, null, 2) + "\n", { mode: 384 });
+  renameSync(tmp, path);
+}
+function recordPull(entry, path = manifestPath()) {
+  const m = loadManifest(path);
+  const idx = m.entries.findIndex((e) => e.install === entry.install && e.dirName === entry.dirName);
+  if (idx >= 0)
+    m.entries[idx] = entry;
+  else
+    m.entries.push(entry);
+  saveManifest(m, path);
+}
+function removePullEntry(install, dirName, path = manifestPath()) {
+  const m = loadManifest(path);
+  const before = m.entries.length;
+  m.entries = m.entries.filter((e) => !(e.install === install && e.dirName === dirName));
+  if (m.entries.length !== before)
+    saveManifest(m, path);
+}
+function entriesForRoot(m, install, installRoot) {
+  return m.entries.filter((e) => e.install === install && e.installRoot === installRoot);
+}
+
 // dist/src/skilify/pull.js
+function assertValidAuthor(author) {
+  if (!author)
+    throw new Error("author is empty");
+  if (author.length > 64)
+    throw new Error(`author too long (${author.length}): ${author.slice(0, 32)}\u2026`);
+  if (!/^[A-Za-z0-9_.\-@]+$/.test(author)) {
+    throw new Error(`author contains invalid characters: ${author}`);
+  }
+}
 function esc(s) {
   return s.replace(/\\/g, "\\\\").replace(/'/g, "''").replace(/[\x01-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
@@ -4828,10 +4918,10 @@ function isMissingTableError(message) {
 }
 function resolvePullDestination(install, cwd) {
   if (install === "global")
-    return join17(homedir7(), ".claude", "skills");
+    return join18(homedir8(), ".claude", "skills");
   if (!cwd)
     throw new Error("install=project requires a cwd");
-  return join17(cwd, ".claude", "skills");
+  return join18(cwd, ".claude", "skills");
 }
 function selectLatestPerName(rows) {
   const seen = /* @__PURE__ */ new Set();
@@ -4897,10 +4987,10 @@ function renderFrontmatter(fm) {
   return lines.join("\n");
 }
 function readLocalVersion(path) {
-  if (!existsSync14(path))
+  if (!existsSync15(path))
     return null;
   try {
-    const text = readFileSync11(path, "utf-8");
+    const text = readFileSync12(path, "utf-8");
     const parsed = parseFrontmatter(text);
     if (!parsed)
       return null;
@@ -4953,9 +5043,28 @@ async function runPull(opts) {
       summary.skipped++;
       continue;
     }
-    const projectKey = String(row.project_key ?? "");
-    const skillDir = projectKey ? join17(root, projectKey, name) : join17(root, name);
-    const skillFile = join17(skillDir, "SKILL.md");
+    const author = String(row.author ?? "");
+    let dirName = name;
+    if (author) {
+      try {
+        assertValidAuthor(author);
+        dirName = `${name}--${author}`;
+      } catch (e) {
+        summary.entries.push({
+          name,
+          remoteVersion: Number(row.version ?? 1),
+          localVersion: null,
+          action: "skipped",
+          destination: `(invalid author '${author}' \u2014 skipped)`,
+          author,
+          sourceAgent: String(row.source_agent ?? "")
+        });
+        summary.skipped++;
+        continue;
+      }
+    }
+    const skillDir = join18(root, dirName);
+    const skillFile = join18(skillDir, "SKILL.md");
     const remoteVersion = Number(row.version ?? 1);
     const localVersion = readLocalVersion(skillFile);
     const action = decideAction({
@@ -4965,14 +5074,27 @@ async function runPull(opts) {
       dryRun: opts.dryRun ?? false
     });
     if (action === "wrote") {
-      mkdirSync6(skillDir, { recursive: true });
-      if (existsSync14(skillFile)) {
+      mkdirSync7(skillDir, { recursive: true });
+      if (existsSync15(skillFile)) {
         try {
-          renameSync(skillFile, `${skillFile}.bak`);
+          renameSync2(skillFile, `${skillFile}.bak`);
         } catch {
         }
       }
-      writeFileSync8(skillFile, renderSkillFile(row));
+      writeFileSync9(skillFile, renderSkillFile(row));
+      try {
+        recordPull({
+          dirName,
+          name,
+          author,
+          projectKey: String(row.project_key ?? ""),
+          remoteVersion,
+          install: opts.install,
+          installRoot: root,
+          pulledAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      } catch (e) {
+      }
     }
     summary.entries.push({
       name,
@@ -4993,18 +5115,178 @@ async function runPull(opts) {
   return summary;
 }
 
+// dist/src/skilify/unpull.js
+import { existsSync as existsSync16, readdirSync as readdirSync3, rmSync as rmSync5, statSync as statSync3 } from "node:fs";
+import { homedir as homedir9 } from "node:os";
+import { join as join19 } from "node:path";
+function resolveUnpullRoot(install, cwd) {
+  if (install === "global")
+    return join19(homedir9(), ".claude", "skills");
+  if (!cwd)
+    throw new Error("cwd required when install === 'project'");
+  return join19(cwd, ".claude", "skills");
+}
+function runUnpull(opts) {
+  const root = resolveUnpullRoot(opts.install, opts.cwd);
+  const summary = {
+    scanned: 0,
+    removed: 0,
+    wouldRemove: 0,
+    kept: 0,
+    manifestPruned: 0,
+    entries: []
+  };
+  const userFilter = new Set(opts.users.filter((u) => u.length > 0));
+  const haveUserFilter = userFilter.size > 0;
+  const manifest = loadManifest();
+  const entries = entriesForRoot(manifest, opts.install, root);
+  for (const entry of entries) {
+    summary.scanned++;
+    const path = join19(root, entry.dirName);
+    if (!existsSync16(path)) {
+      if (!opts.dryRun)
+        removePullEntry(opts.install, entry.dirName);
+      summary.entries.push({
+        dirName: entry.dirName,
+        kind: "manifest-orphan",
+        author: entry.author,
+        name: entry.name,
+        action: opts.dryRun ? "kept-policy" : "manifest-pruned",
+        reason: opts.dryRun ? "would-prune (orphan, dir missing)" : "directory was already missing",
+        path: ""
+      });
+      if (!opts.dryRun)
+        summary.manifestPruned++;
+      else
+        summary.kept++;
+      continue;
+    }
+    const decision = decideTargetForManifestEntry(entry, opts, userFilter, haveUserFilter);
+    const result = {
+      dirName: entry.dirName,
+      kind: "pulled-manifest",
+      author: entry.author,
+      name: entry.name,
+      action: "kept-policy",
+      path
+    };
+    if (!decision.shouldRemove) {
+      result.reason = decision.reason;
+      summary.kept++;
+      summary.entries.push(result);
+      continue;
+    }
+    if (opts.dryRun) {
+      result.action = "would-remove";
+      summary.wouldRemove++;
+    } else {
+      try {
+        rmSync5(path, { recursive: true, force: true });
+        removePullEntry(opts.install, entry.dirName);
+        result.action = "removed";
+        summary.removed++;
+      } catch (e) {
+        result.action = "kept-policy";
+        result.reason = `rm failed: ${e?.message ?? e}`;
+        summary.kept++;
+      }
+    }
+    summary.entries.push(result);
+  }
+  if (existsSync16(root) && (opts.all || opts.legacyCleanup)) {
+    const manifestDirNames = new Set(entries.map((e) => e.dirName));
+    for (const dirName of readdirSync3(root)) {
+      if (manifestDirNames.has(dirName))
+        continue;
+      const path = join19(root, dirName);
+      let st;
+      try {
+        st = statSync3(path);
+      } catch {
+        continue;
+      }
+      if (!st.isDirectory())
+        continue;
+      const isLegacyProjectKey = /^[0-9a-f]{16}$/.test(dirName);
+      const isLocallyMined = !isLegacyProjectKey && /^[A-Za-z0-9_.-]+$/.test(dirName) && !dirName.includes("--");
+      let kind;
+      let shouldRemove = false;
+      let reason;
+      if (isLegacyProjectKey) {
+        kind = "legacy-projectkey";
+        if (opts.legacyCleanup)
+          shouldRemove = true;
+        else
+          reason = "legacy project_key dir (use --legacy-cleanup)";
+      } else if (isLocallyMined) {
+        kind = "locally-mined";
+        if (opts.all)
+          shouldRemove = true;
+        else
+          reason = "locally-mined (use --all to remove)";
+      } else {
+        continue;
+      }
+      summary.scanned++;
+      const result = {
+        dirName,
+        kind,
+        author: null,
+        name: kind === "locally-mined" ? dirName : null,
+        action: "kept-policy",
+        path,
+        reason
+      };
+      if (!shouldRemove) {
+        summary.kept++;
+        summary.entries.push(result);
+        continue;
+      }
+      if (opts.dryRun) {
+        result.action = "would-remove";
+        summary.wouldRemove++;
+      } else {
+        try {
+          rmSync5(path, { recursive: true, force: true });
+          result.action = "removed";
+          summary.removed++;
+        } catch (e) {
+          result.action = "kept-policy";
+          result.reason = `rm failed: ${e?.message ?? e}`;
+          summary.kept++;
+        }
+      }
+      summary.entries.push(result);
+    }
+  }
+  return summary;
+}
+function decideTargetForManifestEntry(entry, opts, userFilter, haveUserFilter) {
+  if (haveUserFilter && !userFilter.has(entry.author)) {
+    return { shouldRemove: false, reason: `author '${entry.author}' not in filter` };
+  }
+  if (opts.notMine) {
+    if (!opts.myUsername)
+      return { shouldRemove: false, reason: "--not-mine requires myUsername" };
+    if (entry.author === opts.myUsername) {
+      return { shouldRemove: false, reason: "your own pull (--not-mine excludes self)" };
+    }
+  }
+  return { shouldRemove: true };
+}
+
 // dist/src/commands/skilify.js
-var STATE_DIR2 = join18(homedir8(), ".deeplake", "state", "skilify");
+var STATE_DIR2 = join20(homedir10(), ".deeplake", "state", "skilify");
 function showStatus() {
   const cfg = loadScopeConfig();
   console.log(`scope:   ${cfg.scope}`);
   console.log(`team:    ${cfg.team.length === 0 ? "(empty)" : cfg.team.join(", ")}`);
   console.log(`install: ${cfg.install}  (${cfg.install === "global" ? "~/.claude/skills/" : "<project>/.claude/skills/"})`);
-  if (!existsSync15(STATE_DIR2)) {
+  if (!existsSync17(STATE_DIR2)) {
     console.log(`state: (no projects tracked yet)`);
     return;
   }
-  const files = readdirSync3(STATE_DIR2).filter((f) => f.endsWith(".json") && f !== "config.json");
+  const files = readdirSync4(STATE_DIR2).filter((f) => f.endsWith(".json") && f !== "config.json");
   if (files.length === 0) {
     console.log(`state: (no projects tracked yet)`);
     return;
@@ -5012,7 +5294,7 @@ function showStatus() {
   console.log(`state: ${files.length} project(s) tracked`);
   for (const f of files) {
     try {
-      const s = JSON.parse(readFileSync12(join18(STATE_DIR2, f), "utf-8"));
+      const s = JSON.parse(readFileSync13(join20(STATE_DIR2, f), "utf-8"));
       const skills = s.skillsGenerated.length === 0 ? "none" : s.skillsGenerated.join(", ");
       console.log(`  - ${s.project} (counter=${s.counter}, last=${s.lastDate ?? "never"}, skills=${skills})`);
     } catch {
@@ -5038,7 +5320,7 @@ function setInstall(loc) {
   }
   const cfg = loadScopeConfig();
   saveScopeConfig({ ...cfg, install: loc });
-  const path = loc === "global" ? join18(homedir8(), ".claude", "skills") : "<cwd>/.claude/skills";
+  const path = loc === "global" ? join20(homedir10(), ".claude", "skills") : "<cwd>/.claude/skills";
   console.log(`Install location set to '${loc}'. New skills will be written to ${path}/<name>/SKILL.md.`);
 }
 function promoteSkill(name, cwd) {
@@ -5046,18 +5328,18 @@ function promoteSkill(name, cwd) {
     console.error("Usage: hivemind skilify promote <skill-name>");
     process.exit(1);
   }
-  const projectPath = join18(cwd, ".claude", "skills", name);
-  const globalPath = join18(homedir8(), ".claude", "skills", name);
-  if (!existsSync15(join18(projectPath, "SKILL.md"))) {
+  const projectPath = join20(cwd, ".claude", "skills", name);
+  const globalPath = join20(homedir10(), ".claude", "skills", name);
+  if (!existsSync17(join20(projectPath, "SKILL.md"))) {
     console.error(`Skill '${name}' not found at ${projectPath}/SKILL.md`);
     process.exit(1);
   }
-  if (existsSync15(join18(globalPath, "SKILL.md"))) {
+  if (existsSync17(join20(globalPath, "SKILL.md"))) {
     console.error(`Skill '${name}' already exists at ${globalPath}/SKILL.md \u2014 refusing to overwrite. Remove it first or rename the project skill.`);
     process.exit(1);
   }
-  mkdirSync7(dirname2(globalPath), { recursive: true });
-  renameSync2(projectPath, globalPath);
+  mkdirSync8(dirname3(globalPath), { recursive: true });
+  renameSync3(projectPath, globalPath);
   console.log(`Promoted '${name}' from ${projectPath} \u2192 ${globalPath}.`);
 }
 function teamAdd(name) {
@@ -5114,6 +5396,15 @@ function usage() {
   console.log("      --all-users               all authors (default \u2014 equivalent to no filter)");
   console.log("      --dry-run                 show what would be written, don't touch disk");
   console.log("      --force                   overwrite even when local version >= remote");
+  console.log("  hivemind skilify unpull [opts]              remove skills previously installed by pull");
+  console.log("    Options for unpull:");
+  console.log("      --to <project|global>     where to scan (default: global)");
+  console.log("      --user <name>             only entries authored by this user");
+  console.log("      --users <a,b,c>           only entries authored by these users");
+  console.log("      --not-mine                remove all pulled entries except your own");
+  console.log("      --dry-run                 show what would be removed");
+  console.log("      --all                     also remove flat-layout (locally-mined) entries");
+  console.log("      --legacy-cleanup          also remove pre-`--author`-layout legacy `<projectKey>/` dirs");
   console.log("  hivemind skilify status                     show per-project state");
 }
 function takeFlagValue(args, flag) {
@@ -5178,7 +5469,7 @@ async function pullSkills(args) {
     console.error(`pull failed: ${e?.message ?? e}`);
     process.exit(1);
   }
-  const dest = toRaw === "global" ? join18(homedir8(), ".claude", "skills") : `${process.cwd()}/.claude/skills`;
+  const dest = toRaw === "global" ? join20(homedir10(), ".claude", "skills") : `${process.cwd()}/.claude/skills`;
   const filterDesc = users.length === 0 ? "all users" : users.join(", ");
   console.log(`Destination: ${dest}`);
   console.log(`Filter:      ${filterDesc}${skillName ? ` \xB7 skill='${skillName}'` : ""}${dryRun ? " \xB7 dry-run" : ""}${force ? " \xB7 force" : ""}`);
@@ -5189,6 +5480,64 @@ async function pullSkills(args) {
     console.log(`  ${tag.padEnd(15)} ${e.name.padEnd(40)} ${ver.padEnd(20)} (${e.author}/${e.sourceAgent})`);
   }
   console.log(`Result: ${summary.wrote} written, ${summary.dryrun} dry-run, ${summary.skipped} skipped.`);
+}
+async function unpullSkills(args) {
+  const work = [...args];
+  const toRaw = takeFlagValue(work, "--to") ?? "global";
+  const userOne = takeFlagValue(work, "--user");
+  const usersMany = takeFlagValue(work, "--users");
+  const notMine = takeBooleanFlag(work, "--not-mine");
+  const dryRun = takeBooleanFlag(work, "--dry-run");
+  const all = takeBooleanFlag(work, "--all");
+  const legacyCleanup = takeBooleanFlag(work, "--legacy-cleanup");
+  if (toRaw !== "project" && toRaw !== "global") {
+    console.error(`Invalid --to '${toRaw}'. Use 'project' or 'global'.`);
+    process.exit(1);
+  }
+  let users = [];
+  if (userOne)
+    users = [userOne];
+  else if (usersMany)
+    users = usersMany.split(",").map((s) => s.trim()).filter(Boolean);
+  const config = loadConfig();
+  if (!config) {
+    console.error("Not logged in. Run: hivemind login");
+    process.exit(1);
+  }
+  const summary = runUnpull({
+    install: toRaw,
+    cwd: toRaw === "project" ? process.cwd() : void 0,
+    users,
+    myUsername: config.userName,
+    notMine,
+    dryRun,
+    all,
+    legacyCleanup
+  });
+  const dest = toRaw === "global" ? join20(homedir10(), ".claude", "skills") : `${process.cwd()}/.claude/skills`;
+  const filterParts = [];
+  if (users.length > 0)
+    filterParts.push(`users=${users.join(",")}`);
+  if (notMine)
+    filterParts.push("not-mine");
+  if (all)
+    filterParts.push("all");
+  if (legacyCleanup)
+    filterParts.push("legacy-cleanup");
+  if (dryRun)
+    filterParts.push("dry-run");
+  const filterDesc = filterParts.length ? filterParts.join(" \xB7 ") : "(no filter \u2014 all pulled)";
+  console.log(`Scanning:    ${dest}`);
+  console.log(`Filter:      ${filterDesc}`);
+  console.log(`Scanned ${summary.scanned} dir(s).`);
+  for (const e of summary.entries) {
+    const tag = e.action === "removed" ? "\u2713 removed" : e.action === "would-remove" ? "\u2192 would remove" : e.action === "manifest-pruned" ? "\u26A0 pruned (orphan)" : "\xB7 kept";
+    const id = e.dirName;
+    const note = e.reason ? `  (${e.reason})` : "";
+    console.log(`  ${tag.padEnd(20)} ${id.padEnd(50)} [${e.kind}]${note}`);
+  }
+  const prunedNote = summary.manifestPruned > 0 ? `, ${summary.manifestPruned} manifest-pruned` : "";
+  console.log(`Result: ${summary.removed} removed, ${summary.wouldRemove} dry-run, ${summary.kept} kept${prunedNote}.`);
 }
 function runSkilifyCommand(args) {
   const sub = args[0];
@@ -5211,6 +5560,13 @@ function runSkilifyCommand(args) {
   if (sub === "pull") {
     pullSkills(args.slice(1)).catch((e) => {
       console.error(`pull error: ${e?.message ?? e}`);
+      process.exit(1);
+    });
+    return;
+  }
+  if (sub === "unpull") {
+    unpullSkills(args.slice(1)).catch((e) => {
+      console.error(`unpull error: ${e?.message ?? e}`);
       process.exit(1);
     });
     return;
@@ -5246,13 +5602,13 @@ if (process.argv[1] && process.argv[1].endsWith("skilify.js")) {
 
 // dist/src/cli/update.js
 import { execFileSync as execFileSync4 } from "node:child_process";
-import { existsSync as existsSync16, readFileSync as readFileSync14, realpathSync } from "node:fs";
-import { dirname as dirname4, sep } from "node:path";
+import { existsSync as existsSync18, readFileSync as readFileSync15, realpathSync } from "node:fs";
+import { dirname as dirname5, sep } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // dist/src/utils/version-check.js
-import { readFileSync as readFileSync13 } from "node:fs";
-import { dirname as dirname3, join as join19 } from "node:path";
+import { readFileSync as readFileSync14 } from "node:fs";
+import { dirname as dirname4, join as join21 } from "node:path";
 function isNewer(latest, current) {
   const parse = (v) => v.split(".").map(Number);
   const [la, lb, lc] = parse(latest);
@@ -5271,24 +5627,24 @@ function detectInstallKind(argv1) {
       return argv1 ?? process.argv[1] ?? fileURLToPath2(import.meta.url);
     }
   })();
-  let dir = dirname4(realArgv1);
+  let dir = dirname5(realArgv1);
   let installDir = null;
   for (let i = 0; i < 10; i++) {
     const pkgPath = `${dir}${sep}package.json`;
     try {
-      const pkg = JSON.parse(readFileSync14(pkgPath, "utf-8"));
+      const pkg = JSON.parse(readFileSync15(pkgPath, "utf-8"));
       if (pkg.name === PKG_NAME || pkg.name === "hivemind") {
         installDir = dir;
         break;
       }
     } catch {
     }
-    const parent = dirname4(dir);
+    const parent = dirname5(dir);
     if (parent === dir)
       break;
     dir = parent;
   }
-  installDir ??= dirname4(realArgv1);
+  installDir ??= dirname5(realArgv1);
   if (realArgv1.includes(`${sep}_npx${sep}`) || realArgv1.includes(`${sep}.npx${sep}`)) {
     return { kind: "npx", installDir };
   }
@@ -5297,10 +5653,10 @@ function detectInstallKind(argv1) {
   }
   let gitDir = installDir;
   for (let i = 0; i < 6; i++) {
-    if (existsSync16(`${gitDir}${sep}.git`)) {
+    if (existsSync18(`${gitDir}${sep}.git`)) {
       return { kind: "local-dev", installDir };
     }
-    const parent = dirname4(gitDir);
+    const parent = dirname5(gitDir);
     if (parent === gitDir)
       break;
     gitDir = parent;
@@ -5459,6 +5815,11 @@ Skill management (mine + share reusable Claude skills across the org):
                                            Options: --user <email>, --users a,b,c,
                                            --all-users, --to <project|global>,
                                            --dry-run, --force.
+  hivemind skilify unpull                  Remove skills previously installed by pull.
+                                           Options: --user, --users, --not-mine,
+                                           --to <project|global>, --dry-run,
+                                           --all (also locally-mined),
+                                           --legacy-cleanup (pre-suffix-author dirs).
   hivemind skilify scope <me|team|org>     Set the sharing scope for newly mined skills.
   hivemind skilify install <project|global>  Set where new skills are written.
   hivemind skilify promote <name>          Move a project skill to the global location.

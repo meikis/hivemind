@@ -702,6 +702,10 @@ SKILLS (skilify) \u2014 mine + share reusable skills across the org:
 - hivemind skilify pull --dry-run          \u2014 preview only
 - hivemind skilify pull --force            \u2014 overwrite local (creates .bak)
 - hivemind skilify pull <skill-name>       \u2014 pull only that skill (combines with --user)
+- hivemind skilify unpull                  \u2014 remove every skill previously installed by pull
+- hivemind skilify unpull --user <email>   \u2014 remove only that author's pulls
+- hivemind skilify unpull --not-mine       \u2014 remove all pulls except your own
+- hivemind skilify unpull --dry-run        \u2014 preview without touching disk
 - hivemind skilify scope <me|team|org>     \u2014 sharing scope for new skills
 - hivemind skilify install <project|global>  \u2014 default install location
 - hivemind skilify team add|remove|list <name>  \u2014 manage team list`;
