@@ -5,13 +5,10 @@ import { join } from "node:path";
 
 // Mock the loadConfig + DeeplakeApi so the pull subcommand can run without
 // hitting the network. The mock returns a fake row from the skills table.
+// loadConfig is a vi.fn so individual tests can swap in null (unauthenticated)
+// to exercise the unpull login-gating path.
 vi.mock("../../src/config.js", () => ({
-  loadConfig: () => ({
-    token: "tok", apiUrl: "x", orgId: "org", workspaceId: "ws",
-    userName: "tester", skillsTableName: "skills",
-    tableName: "memory", sessionsTableName: "sessions", memoryPath: "/m",
-    orgName: "org",
-  }),
+  loadConfig: vi.fn(),
 }));
 vi.mock("../../src/deeplake-api.js", () => ({
   DeeplakeApi: class {
@@ -28,6 +25,15 @@ vi.mock("../../src/deeplake-api.js", () => ({
 }));
 
 import { runSkilifyCommand } from "../../src/commands/skilify.js";
+import { loadConfig } from "../../src/config.js";
+const loadConfigMock = loadConfig as unknown as ReturnType<typeof vi.fn>;
+
+const VALID_CONFIG = {
+  token: "tok", apiUrl: "x", orgId: "org", workspaceId: "ws",
+  userName: "tester", skillsTableName: "skills",
+  tableName: "memory", sessionsTableName: "sessions", memoryPath: "/m",
+  orgName: "org",
+};
 
 const STATE_DIR = join(homedir(), ".deeplake", "state", "skilify");
 const CONFIG_PATH = join(STATE_DIR, "config.json");
@@ -45,6 +51,11 @@ beforeEach(() => {
   else configBackup = null;
   try { rmSync(CONFIG_PATH); } catch { /* nothing */ }
   logged = []; erred = [];
+  // Default: logged in. Individual tests can `loadConfigMock.mockReturnValueOnce(null)`
+  // to exercise the unauthenticated path of unpull (no login needed) vs --not-mine
+  // (which still requires myUsername).
+  loadConfigMock.mockReset();
+  loadConfigMock.mockReturnValue(VALID_CONFIG);
   logSpy = vi.spyOn(console, "log").mockImplementation((...args: any[]) => { logged.push(args.join(" ")); });
   errSpy = vi.spyOn(console, "error").mockImplementation((...args: any[]) => { erred.push(args.join(" ")); });
   exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => { throw new Error(`__EXIT_${code ?? 0}__`); }) as any);
@@ -78,6 +89,30 @@ describe("status (default subcommand)", () => {
   it("`status` subcommand alias", () => {
     runSkilifyCommand(["status"]);
     expect(logged.join("\n")).toMatch(/scope:/);
+  });
+
+  it("does NOT count config.json or pulled.json as tracked projects", () => {
+    // Both files live in the same STATE_DIR but are skilify's own bookkeeping;
+    // counting them would inflate "N project(s) tracked" and the parse loop
+    // below would JSON.parse the wrong shape and silently swallow the error.
+    const stateHome = mkdtempSync(join(tmpdir(), "skilify-cli-status-"));
+    const prevHome = process.env.HOME;
+    process.env.HOME = stateHome;
+    try {
+      const stateDir = join(stateHome, ".deeplake", "state", "skilify");
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(join(stateDir, "config.json"), JSON.stringify({ scope: "me", team: [], install: "global" }));
+      writeFileSync(join(stateDir, "pulled.json"), JSON.stringify({ version: 1, entries: [] }));
+      logged = [];
+      runSkilifyCommand([]);
+      const out = logged.join("\n");
+      expect(out).toMatch(/state: \(no projects tracked yet\)/);
+      expect(out).not.toMatch(/project\(s\) tracked/);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      rmSync(stateHome, { recursive: true, force: true });
+    }
   });
 });
 
@@ -243,6 +278,154 @@ describe("pull", () => {
   // and-forget promise, so they can't be caught from a sync test.
   // The validation logic itself is exercised by direct pull.test.ts tests
   // (buildPullSql, resolvePullDestination).
+});
+
+// ── unpull ────────────────────────────────────────────────────────────────
+
+describe("unpull", () => {
+  // Each test runs under a fresh HOME so the manifest writes by
+  // pull/unpull don't pollute the developer's real ~/.deeplake state.
+  let unpullHome: string;
+  let originalHome: string | undefined;
+  beforeEach(() => {
+    unpullHome = mkdtempSync(join(tmpdir(), "skilify-cli-unpull-home-"));
+    originalHome = process.env.HOME;
+    process.env.HOME = unpullHome;
+  });
+  afterEach(() => {
+    try { rmSync(unpullHome, { recursive: true, force: true }); } catch { /* nothing */ }
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  });
+
+  it("--dry-run on empty manifest reports zero work", () => {
+    runSkilifyCommand(["unpull", "--dry-run"]);
+    const out = logged.join("\n");
+    expect(out).toMatch(/Scanning:/);
+    expect(out).toMatch(/Filter:\s+dry-run/);
+    expect(out).toMatch(/Result: 0 removed, 0 dry-run, 0 kept\./);
+  });
+
+  it("default filter description is 'no filter — all pulled'", () => {
+    runSkilifyCommand(["unpull"]);
+    expect(logged.join("\n")).toMatch(/Filter:\s+\(no filter — all pulled\)/);
+  });
+
+  it("composes manifest-only filter flags into the filter description", () => {
+    // --all and --legacy-cleanup are mutually exclusive with --user/--users
+    // /--not-mine (see filter+all conflict guard), so the manifest-only
+    // path is the right surface to assert flag composition on.
+    runSkilifyCommand(["unpull", "--user", "alice", "--not-mine", "--dry-run"]);
+    const out = logged.join("\n");
+    expect(out).toMatch(/users=alice/);
+    expect(out).toMatch(/not-mine/);
+    expect(out).toMatch(/dry-run/);
+  });
+
+  it("composes disk-walk flags into the filter description", () => {
+    runSkilifyCommand(["unpull", "--all", "--legacy-cleanup", "--dry-run"]);
+    const out = logged.join("\n");
+    expect(out).toMatch(/all/);
+    expect(out).toMatch(/legacy-cleanup/);
+    expect(out).toMatch(/dry-run/);
+  });
+
+  it("--users a,b,c parses CSV into the filter", () => {
+    runSkilifyCommand(["unpull", "--users", "alice,bob,carol", "--dry-run"]);
+    expect(logged.join("\n")).toMatch(/users=alice,bob,carol/);
+  });
+
+  it("--to project scopes the scanning root to cwd", () => {
+    const dir = mkdtempSync(join(tmpdir(), "skilify-cli-unpull-proj-"));
+    process.chdir(dir);
+    runSkilifyCommand(["unpull", "--to", "project", "--dry-run"]);
+    expect(logged.join("\n")).toMatch(new RegExp(`Scanning:\\s+${dir}/.claude/skills`));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("--to with invalid value reports error", async () => {
+    // unpullSkills throws on bad input; the dispatcher's `.catch` logs
+    // the message via console.error and exits 1.
+    runSkilifyCommand(["unpull", "--to", "weird"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).toMatch(/Invalid --to/);
+  });
+
+  it("integrates with pull: round-trip clears manifest + disk", async () => {
+    // 1. pull populates manifest + disk
+    runSkilifyCommand(["pull", "--user", "alice", "--to", "global"]);
+    await new Promise(r => setImmediate(r));
+    const out1 = logged.join("\n");
+    expect(out1).toMatch(/1 written/);
+    logged = [];
+
+    // 2. unpull clears it
+    runSkilifyCommand(["unpull", "--user", "alice"]);
+    const out2 = logged.join("\n");
+    expect(out2).toMatch(/1 removed/);
+    expect(out2).toMatch(/fake-skill--alice/);
+
+    // 3. re-running unpull is idempotent (no entries, no errors)
+    logged = [];
+    runSkilifyCommand(["unpull"]);
+    expect(logged.join("\n")).toMatch(/Scanned 0 dir\(s\)/);
+  });
+
+  it("emits 'manifest-pruned' tag when an entry's directory is missing on disk", async () => {
+    // pull installs a skill, then we delete its dir out-of-band so the
+    // manifest entry becomes an orphan
+    runSkilifyCommand(["pull", "--user", "alice", "--to", "global"]);
+    await new Promise(r => setImmediate(r));
+    rmSync(join(unpullHome, ".claude", "skills"), { recursive: true, force: true });
+    logged = [];
+
+    runSkilifyCommand(["unpull"]);
+    const out = logged.join("\n");
+    expect(out).toMatch(/pruned \(orphan\)/);
+    expect(out).toMatch(/manifest-pruned/);
+  });
+
+  // ── login gating ──────────────────────────────────────────────────────────
+  // Unpull is a local FS-only operation in the default path; only --not-mine
+  // needs a username to compare against. Don't force the user back through
+  // `hivemind login` just to clean up disk state when their cred is gone.
+
+  it("default unpull works when not logged in (no Deeplake call required)", async () => {
+    loadConfigMock.mockReturnValue(null);
+    runSkilifyCommand(["unpull", "--dry-run"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).not.toMatch(/login/i);
+    expect(logged.join("\n")).toMatch(/Result: 0 removed/);
+  });
+
+  it("--user X works when not logged in (filter is local, not a server query)", async () => {
+    loadConfigMock.mockReturnValue(null);
+    runSkilifyCommand(["unpull", "--user", "alice", "--dry-run"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).not.toMatch(/login/i);
+    expect(logged.join("\n")).toMatch(/users=alice/);
+  });
+
+  it("--not-mine still requires login (needs myUsername to exclude self)", async () => {
+    loadConfigMock.mockReturnValue(null);
+    runSkilifyCommand(["unpull", "--not-mine", "--dry-run"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).toMatch(/--not-mine requires a logged-in user/);
+  });
+
+  // ── filter+all conflict surfacing ─────────────────────────────────────────
+
+  it("--all combined with --user surfaces a clear error message", async () => {
+    runSkilifyCommand(["unpull", "--all", "--user", "alice"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).toMatch(/--all.*--user/);
+  });
+
+  it("--legacy-cleanup combined with --not-mine surfaces a clear error message", async () => {
+    runSkilifyCommand(["unpull", "--legacy-cleanup", "--not-mine"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).toMatch(/--legacy-cleanup.*--not-mine/);
+  });
 });
 
 // ── usage / unknown ───────────────────────────────────────────────────────

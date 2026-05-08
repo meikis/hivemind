@@ -22,6 +22,21 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { assertValidSkillName, parseFrontmatter, type SkillFrontmatter } from "./skill-writer.js";
 import type { InstallLocation } from "./scope-config.js";
+import { recordPull } from "./manifest.js";
+
+/**
+ * Tighter-than-skill-name validator for the author segment that becomes a
+ * directory name (`<root>/<name>--<author>/`). Same intent as
+ * `assertValidSkillName`: reject anything that could escape the install
+ * root or break path-handling tools.
+ */
+export function assertValidAuthor(author: string): void {
+  if (!author) throw new Error("author is empty");
+  if (author.length > 64) throw new Error(`author too long (${author.length}): ${author.slice(0, 32)}…`);
+  if (!/^[A-Za-z0-9_.\-@]+$/.test(author)) {
+    throw new Error(`author contains invalid characters: ${author}`);
+  }
+}
 
 export type QueryFn = (sql: string) => Promise<Record<string, unknown>[]>;
 
@@ -55,6 +70,14 @@ export interface PullResultEntry {
   destination: string;
   author: string;
   sourceAgent: string;
+  /**
+   * Set when the SKILL.md was written successfully but the manifest
+   * recording failed afterwards — surface the underlying message so the
+   * caller can warn loudly. The skill exists on disk but `unpull` will
+   * not be able to remove it via the manifest path, so the user must
+   * either delete the dir manually or repull.
+   */
+  manifestError?: string;
 }
 
 export interface PullSummary {
@@ -274,10 +297,47 @@ export async function runPull(opts: PullOptions): Promise<PullSummary> {
       summary.skipped++;
       continue;
     }
-    const projectKey = String(row.project_key ?? "");
-    // Project subdirectory keeps cross-project skills with the same name
-    // disjoint. Skip it only when project_key is empty (legacy rows).
-    const skillDir = projectKey ? join(root, projectKey, name) : join(root, name);
+    const author = String(row.author ?? "");
+    // Pulled skills land at `<root>/<name>--<author>/SKILL.md` so:
+    //   1. Claude Code's skill loader (single-depth scan) sees them directly
+    //   2. Cross-author name collisions stay disjoint on disk
+    //   3. The directory name self-documents authorship at a glance
+    // Locally-mined skills stay at `<root>/<name>/` (flat, no suffix), so
+    // a self-mined `deploy` and a pulled `deploy--alice` coexist.
+    // Same-author / same-name across two projects is the one regression vs
+    // the legacy `<projectKey>/<name>/` layout: the more recently pulled
+    // row clobbers the earlier one (with `.bak` of the prior SKILL.md).
+    // Acceptable trade-off — the row stays in Deeplake and is recoverable
+    // via re-pull from the project that authored it.
+    //
+    // Empty `author` would degrade the path to `<root>/<name>/` (the
+    // locally-mined slot) and silently clobber the user's own skill of
+    // the same name, breaking the coexistence guarantee above. Skip the
+    // row instead — Deeplake should always populate `author`, and
+    // ignoring an empty one is safer than guessing a placeholder.
+    if (!author) {
+      summary.entries.push({
+        name, remoteVersion: Number(row.version ?? 1), localVersion: null,
+        action: "skipped", destination: "(empty author — skipped)",
+        author: "", sourceAgent: String(row.source_agent ?? ""),
+      });
+      summary.skipped++;
+      continue;
+    }
+    let dirName: string;
+    try {
+      assertValidAuthor(author);
+      dirName = `${name}--${author}`;
+    } catch (e: any) {
+      summary.entries.push({
+        name, remoteVersion: Number(row.version ?? 1), localVersion: null,
+        action: "skipped", destination: `(invalid author '${author}' — skipped)`,
+        author, sourceAgent: String(row.source_agent ?? ""),
+      });
+      summary.skipped++;
+      continue;
+    }
+    const skillDir = join(root, dirName);
     const skillFile = join(skillDir, "SKILL.md");
     const remoteVersion = Number(row.version ?? 1);
     const localVersion = readLocalVersion(skillFile);
@@ -287,6 +347,7 @@ export async function runPull(opts: PullOptions): Promise<PullSummary> {
       dryRun: opts.dryRun ?? false,
     });
 
+    let manifestError: string | undefined;
     if (action === "wrote") {
       mkdirSync(skillDir, { recursive: true });
       // Backup any existing file before overwriting (only if it was non-null
@@ -295,6 +356,26 @@ export async function runPull(opts: PullOptions): Promise<PullSummary> {
         try { renameSync(skillFile, `${skillFile}.bak`); } catch { /* best effort */ }
       }
       writeFileSync(skillFile, renderSkillFile(row));
+      // Record in manifest so `unpull` can identify this entry as
+      // pull-managed without relying on the `--<author>` dirname heuristic.
+      try {
+        recordPull({
+          dirName,
+          name,
+          author,
+          projectKey: String(row.project_key ?? ""),
+          remoteVersion,
+          install: opts.install,
+          installRoot: root,
+          pulledAt: new Date().toISOString(),
+        });
+      } catch (e: any) {
+        // Skill is on disk but the manifest didn't record it — surface
+        // this in the entry so the dispatcher can warn. `unpull` will
+        // not be able to clean this entry via the manifest path until
+        // a successful re-pull populates it.
+        manifestError = e?.message ?? String(e);
+      }
     }
 
     summary.entries.push({
@@ -305,6 +386,7 @@ export async function runPull(opts: PullOptions): Promise<PullSummary> {
       destination: skillFile,
       author: String(row.author ?? ""),
       sourceAgent: String(row.source_agent ?? ""),
+      manifestError,
     });
 
     if (action === "wrote") summary.wrote++;

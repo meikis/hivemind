@@ -24,10 +24,17 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { loadScopeConfig, saveScopeConfig, type Scope, type InstallLocation } from "../skilify/scope-config.js";
 import { runPull, type PullSummary } from "../skilify/pull.js";
+import { runUnpull } from "../skilify/unpull.js";
 import { loadConfig } from "../config.js";
 import { DeeplakeApi } from "../deeplake-api.js";
 
-const STATE_DIR = join(homedir(), ".deeplake", "state", "skilify");
+// Compute lazily so tests that swap `process.env.HOME` actually affect the
+// path. A module-level `const STATE_DIR = join(homedir(), ...)` would
+// capture the developer's real home at import time and bypass HOME
+// isolation, causing test runs to read & pollute ~/.deeplake/state/skilify.
+function stateDir(): string {
+  return join(homedir(), ".deeplake", "state", "skilify");
+}
 
 function showStatus(): void {
   const cfg = loadScopeConfig();
@@ -35,11 +42,19 @@ function showStatus(): void {
   console.log(`team:    ${cfg.team.length === 0 ? "(empty)" : cfg.team.join(", ")}`);
   console.log(`install: ${cfg.install}  (${cfg.install === "global" ? "~/.claude/skills/" : "<project>/.claude/skills/"})`);
 
-  if (!existsSync(STATE_DIR)) {
+  const dir = stateDir();
+  if (!existsSync(dir)) {
     console.log(`state: (no projects tracked yet)`);
     return;
   }
-  const files = readdirSync(STATE_DIR).filter(f => f.endsWith(".json") && f !== "config.json");
+  // Filter out skilify's own bookkeeping files. `config.json` is the
+  // scope/team/install settings; `pulled.json` is the unpull manifest —
+  // neither represents a "tracked project" and counting them inflates the
+  // status output (and the `for` loop below would JSON.parse them with the
+  // wrong shape and silently swallow the error).
+  const files = readdirSync(dir).filter(
+    f => f.endsWith(".json") && f !== "config.json" && f !== "pulled.json",
+  );
   if (files.length === 0) {
     console.log(`state: (no projects tracked yet)`);
     return;
@@ -47,7 +62,7 @@ function showStatus(): void {
   console.log(`state: ${files.length} project(s) tracked`);
   for (const f of files) {
     try {
-      const s = JSON.parse(readFileSync(join(STATE_DIR, f), "utf-8")) as {
+      const s = JSON.parse(readFileSync(join(dir, f), "utf-8")) as {
         project: string; counter: number; lastDate: string | null; skillsGenerated: string[];
       };
       const skills = s.skillsGenerated.length === 0 ? "none" : s.skillsGenerated.join(", ");
@@ -147,6 +162,15 @@ function usage(): void {
   console.log("      --all-users               all authors (default — equivalent to no filter)");
   console.log("      --dry-run                 show what would be written, don't touch disk");
   console.log("      --force                   overwrite even when local version >= remote");
+  console.log("  hivemind skilify unpull [opts]              remove skills previously installed by pull");
+  console.log("    Options for unpull:");
+  console.log("      --to <project|global>     where to scan (default: global)");
+  console.log("      --user <name>             only entries authored by this user");
+  console.log("      --users <a,b,c>           only entries authored by these users");
+  console.log("      --not-mine                remove all pulled entries except your own");
+  console.log("      --dry-run                 show what would be removed");
+  console.log("      --all                     also remove flat-layout (locally-mined) entries");
+  console.log("      --legacy-cleanup          also remove pre-`--author`-layout legacy `<projectKey>/` dirs");
   console.log("  hivemind skilify status                     show per-project state");
 }
 
@@ -231,8 +255,87 @@ async function pullSkills(args: string[]): Promise<void> {
     const tag = e.action === "wrote" ? "✓ wrote" : e.action === "dryrun" ? "→ would write" : "· skipped";
     const ver = e.localVersion === null ? `v${e.remoteVersion} (new)` : `v${e.localVersion} → v${e.remoteVersion}`;
     console.log(`  ${tag.padEnd(15)} ${e.name.padEnd(40)} ${ver.padEnd(20)} (${e.author}/${e.sourceAgent})`);
+    if (e.manifestError) {
+      // Skill is on disk but absent from pulled.json — `unpull` won't
+      // be able to remove it. Loud warning so the user knows to either
+      // delete it manually or repull (which retries the manifest write).
+      console.warn(`    ⚠ manifest not updated: ${e.manifestError} — \`unpull\` will not see this entry until a successful repull.`);
+    }
   }
   console.log(`Result: ${summary.wrote} written, ${summary.dryrun} dry-run, ${summary.skipped} skipped.`);
+}
+
+async function unpullSkills(args: string[]): Promise<void> {
+  const work = [...args];
+  const toRaw = takeFlagValue(work, "--to") ?? "global";
+  const userOne = takeFlagValue(work, "--user");
+  const usersMany = takeFlagValue(work, "--users");
+  const notMine = takeBooleanFlag(work, "--not-mine");
+  const dryRun = takeBooleanFlag(work, "--dry-run");
+  const all = takeBooleanFlag(work, "--all");
+  const legacyCleanup = takeBooleanFlag(work, "--legacy-cleanup");
+
+  // Throw rather than `process.exit(1)` so the dispatcher's `.catch` is
+  // the single point that surfaces the failure — avoids a second exit
+  // call (and a second mocked-throw in tests) that would manifest as an
+  // unhandled promise rejection.
+  if (toRaw !== "project" && toRaw !== "global") {
+    throw new Error(`Invalid --to '${toRaw}'. Use 'project' or 'global'.`);
+  }
+
+  let users: string[] = [];
+  if (userOne) users = [userOne];
+  else if (usersMany) users = usersMany.split(",").map(s => s.trim()).filter(Boolean);
+
+  // Unpull is a local filesystem operation: deleting `<root>/<dir>/` and
+  // pruning `pulled.json`. The Deeplake API is never queried. The only
+  // reason we need credentials is `--not-mine`, which compares each
+  // entry's author to `config.userName`. Skip the login check otherwise so
+  // a user who's been bounced from the org can still clean up their disk.
+  let myUsername: string | undefined;
+  if (notMine) {
+    const config = loadConfig();
+    if (!config) {
+      throw new Error("--not-mine requires a logged-in user. Run: hivemind login");
+    }
+    myUsername = config.userName;
+  }
+
+  const summary = runUnpull({
+    install: toRaw,
+    cwd: toRaw === "project" ? process.cwd() : undefined,
+    users,
+    myUsername,
+    notMine,
+    dryRun,
+    all,
+    legacyCleanup,
+  });
+
+  const dest = toRaw === "global" ? join(homedir(), ".claude", "skills") : `${process.cwd()}/.claude/skills`;
+  const filterParts: string[] = [];
+  if (users.length > 0) filterParts.push(`users=${users.join(",")}`);
+  if (notMine) filterParts.push("not-mine");
+  if (all) filterParts.push("all");
+  if (legacyCleanup) filterParts.push("legacy-cleanup");
+  if (dryRun) filterParts.push("dry-run");
+  const filterDesc = filterParts.length ? filterParts.join(" · ") : "(no filter — all pulled)";
+
+  console.log(`Scanning:    ${dest}`);
+  console.log(`Filter:      ${filterDesc}`);
+  console.log(`Scanned ${summary.scanned} dir(s).`);
+  for (const e of summary.entries) {
+    const tag =
+      e.action === "removed" ? "✓ removed" :
+      e.action === "would-remove" ? "→ would remove" :
+      e.action === "manifest-pruned" ? "⚠ pruned (orphan)" :
+      "· kept";
+    const id = e.dirName;
+    const note = e.reason ? `  (${e.reason})` : "";
+    console.log(`  ${tag.padEnd(20)} ${id.padEnd(50)} [${e.kind}]${note}`);
+  }
+  const prunedNote = summary.manifestPruned > 0 ? `, ${summary.manifestPruned} manifest-pruned` : "";
+  console.log(`Result: ${summary.removed} removed, ${summary.wouldRemove} dry-run, ${summary.kept} kept${prunedNote}.`);
 }
 
 export function runSkilifyCommand(args: string[]): void {
@@ -246,6 +349,19 @@ export function runSkilifyCommand(args: string[]): void {
       console.error(`pull error: ${e?.message ?? e}`);
       process.exit(1);
     });
+    return;
+  }
+  if (sub === "unpull") {
+    unpullSkills(args.slice(1))
+      .catch(e => {
+        console.error(`unpull error: ${e?.message ?? e}`);
+        process.exit(1);
+      })
+      // process.exit is mocked in unit tests as a throw; swallow that
+      // secondary rejection so it doesn't surface as an unhandled error.
+      // In production the real process.exit kills the process, so this
+      // tail catch is unreachable.
+      .catch(() => { /* test-only safety net */ });
     return;
   }
   if (sub === "team") {
