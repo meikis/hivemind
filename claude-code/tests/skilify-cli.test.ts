@@ -90,6 +90,30 @@ describe("status (default subcommand)", () => {
     runSkilifyCommand(["status"]);
     expect(logged.join("\n")).toMatch(/scope:/);
   });
+
+  it("does NOT count config.json or pulled.json as tracked projects", () => {
+    // Both files live in the same STATE_DIR but are skilify's own bookkeeping;
+    // counting them would inflate "N project(s) tracked" and the parse loop
+    // below would JSON.parse the wrong shape and silently swallow the error.
+    const stateHome = mkdtempSync(join(tmpdir(), "skilify-cli-status-"));
+    const prevHome = process.env.HOME;
+    process.env.HOME = stateHome;
+    try {
+      const stateDir = join(stateHome, ".deeplake", "state", "skilify");
+      mkdirSync(stateDir, { recursive: true });
+      writeFileSync(join(stateDir, "config.json"), JSON.stringify({ scope: "me", team: [], install: "global" }));
+      writeFileSync(join(stateDir, "pulled.json"), JSON.stringify({ version: 1, entries: [] }));
+      logged = [];
+      runSkilifyCommand([]);
+      const out = logged.join("\n");
+      expect(out).toMatch(/state: \(no projects tracked yet\)/);
+      expect(out).not.toMatch(/project\(s\) tracked/);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      rmSync(stateHome, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── scope ─────────────────────────────────────────────────────────────────

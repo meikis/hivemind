@@ -461,7 +461,7 @@ file shared across projects).
 Once a teammate's skills are mined into the Deeplake `skills` table, you
 can install them locally with `pull`. Layout written to disk:
 
-```
+```text
 <root>/<name>--<author>/SKILL.md      ← pulled skills (e.g. deploy--alice/)
 <root>/<name>/SKILL.md                ← your locally-mined skills (flat, no suffix)
 ```

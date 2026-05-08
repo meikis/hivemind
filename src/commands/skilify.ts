@@ -28,7 +28,13 @@ import { runUnpull } from "../skilify/unpull.js";
 import { loadConfig } from "../config.js";
 import { DeeplakeApi } from "../deeplake-api.js";
 
-const STATE_DIR = join(homedir(), ".deeplake", "state", "skilify");
+// Compute lazily so tests that swap `process.env.HOME` actually affect the
+// path. A module-level `const STATE_DIR = join(homedir(), ...)` would
+// capture the developer's real home at import time and bypass HOME
+// isolation, causing test runs to read & pollute ~/.deeplake/state/skilify.
+function stateDir(): string {
+  return join(homedir(), ".deeplake", "state", "skilify");
+}
 
 function showStatus(): void {
   const cfg = loadScopeConfig();
@@ -36,11 +42,19 @@ function showStatus(): void {
   console.log(`team:    ${cfg.team.length === 0 ? "(empty)" : cfg.team.join(", ")}`);
   console.log(`install: ${cfg.install}  (${cfg.install === "global" ? "~/.claude/skills/" : "<project>/.claude/skills/"})`);
 
-  if (!existsSync(STATE_DIR)) {
+  const dir = stateDir();
+  if (!existsSync(dir)) {
     console.log(`state: (no projects tracked yet)`);
     return;
   }
-  const files = readdirSync(STATE_DIR).filter(f => f.endsWith(".json") && f !== "config.json");
+  // Filter out skilify's own bookkeeping files. `config.json` is the
+  // scope/team/install settings; `pulled.json` is the unpull manifest —
+  // neither represents a "tracked project" and counting them inflates the
+  // status output (and the `for` loop below would JSON.parse them with the
+  // wrong shape and silently swallow the error).
+  const files = readdirSync(dir).filter(
+    f => f.endsWith(".json") && f !== "config.json" && f !== "pulled.json",
+  );
   if (files.length === 0) {
     console.log(`state: (no projects tracked yet)`);
     return;
@@ -48,7 +62,7 @@ function showStatus(): void {
   console.log(`state: ${files.length} project(s) tracked`);
   for (const f of files) {
     try {
-      const s = JSON.parse(readFileSync(join(STATE_DIR, f), "utf-8")) as {
+      const s = JSON.parse(readFileSync(join(dir, f), "utf-8")) as {
         project: string; counter: number; lastDate: string | null; skillsGenerated: string[];
       };
       const skills = s.skillsGenerated.length === 0 ? "none" : s.skillsGenerated.join(", ");
