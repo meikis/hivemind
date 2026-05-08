@@ -51,11 +51,6 @@ var init_index_marker_store = __esm({
   }
 });
 
-// dist/src/skilify/auto-pull.js
-import { existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync6, renameSync as renameSync3, writeFileSync as writeFileSync5 } from "node:fs";
-import { homedir as homedir7 } from "node:os";
-import { join as join8 } from "node:path";
-
 // dist/src/config.js
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -1059,45 +1054,7 @@ async function runPull(opts) {
 
 // dist/src/skilify/auto-pull.js
 var log3 = (msg) => log("skilify-autopull", msg);
-function stateDir() {
-  return join8(homedir7(), ".deeplake", "state", "skilify");
-}
-function timestampFile() {
-  return join8(stateDir(), "autopull-last-run.json");
-}
-var DEFAULT_INTERVAL_MIN = 30;
 var DEFAULT_TIMEOUT_MS = 5e3;
-function readIntervalMs() {
-  const raw = process.env.HIVEMIND_AUTOPULL_INTERVAL_MIN;
-  if (raw === void 0 || raw === "")
-    return DEFAULT_INTERVAL_MIN * 6e4;
-  const n = Number(raw);
-  if (!Number.isFinite(n))
-    return DEFAULT_INTERVAL_MIN * 6e4;
-  return Math.trunc(n) * 6e4;
-}
-function readLastRun() {
-  const path = timestampFile();
-  if (!existsSync7(path))
-    return null;
-  try {
-    const raw = readFileSync6(path, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.lastRunMs !== "number" || !Number.isFinite(parsed.lastRunMs))
-      return null;
-    return parsed.lastRunMs;
-  } catch {
-    return null;
-  }
-}
-function writeLastRun(lastRunMs) {
-  const dir = stateDir();
-  const path = timestampFile();
-  mkdirSync5(dir, { recursive: true });
-  const tmp = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync5(tmp, JSON.stringify({ lastRunMs }));
-  renameSync3(tmp, path);
-}
 function withTimeout(p, ms) {
   let timer = null;
   const timeout = new Promise((_, reject) => {
@@ -1111,23 +1068,9 @@ function withTimeout(p, ms) {
   });
 }
 async function maybeAutoPull(deps = {}) {
-  const now = (deps.nowMs ?? Date.now)();
   if (process.env.HIVEMIND_AUTOPULL_DISABLED === "1") {
     log3("disabled via HIVEMIND_AUTOPULL_DISABLED=1");
     return { pulled: 0, skipped: true, reason: "disabled" };
-  }
-  const intervalMs = readIntervalMs();
-  if (intervalMs < 0) {
-    log3("disabled via HIVEMIND_AUTOPULL_INTERVAL_MIN=-1");
-    return { pulled: 0, skipped: true, reason: "disabled" };
-  }
-  if (intervalMs > 0) {
-    const last = readLastRun();
-    if (last !== null && now - last < intervalMs) {
-      const remainingMs = intervalMs - (now - last);
-      log3(`throttled (last run ${now - last}ms ago, window ${intervalMs}ms, ${remainingMs}ms remaining)`);
-      return { pulled: 0, skipped: true, reason: "throttled" };
-    }
   }
   const loadFn = deps.loadConfigFn ?? loadConfig;
   const config = loadFn();
@@ -1154,11 +1097,6 @@ async function maybeAutoPull(deps = {}) {
       dryRun: false,
       force: false
     }), timeoutMs);
-    try {
-      writeLastRun(now);
-    } catch (e) {
-      log3(`writeLastRun failed (non-fatal): ${e?.message ?? e}`);
-    }
     log3(`pulled scanned=${summary.scanned} wrote=${summary.wrote} skipped=${summary.skipped}`);
     return { pulled: summary.wrote, skipped: false };
   } catch (e) {
