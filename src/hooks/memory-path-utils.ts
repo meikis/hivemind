@@ -43,6 +43,44 @@ const AGENT_COMMANDS = new Set([
   "claude", "codex", "cursor-agent", "hermes", "pi", "openclaw",
 ]);
 
+/**
+ * Quote-aware split into shell pipeline stages. The naive
+ * `p.split(/\||;|&&/)` treats every literal separator as a real stage
+ * boundary, including separators inside quoted prompt strings — so a
+ * command like `claude -p "first; check ~/.deeplake/memory/"` would
+ * manufacture a phantom stage starting with `check`, and our agent-CLI
+ * allowlist would miss it and false-positive intercept. This walker tracks
+ * single/double-quote state and a one-char backslash escape so only
+ * unquoted separators split.
+ */
+function splitShellStages(p: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+  for (let i = 0; i < p.length; i++) {
+    const ch = p[i];
+    if (escaped) { cur += ch; escaped = false; continue; }
+    if (quote === '"' && ch === "\\") { cur += ch; escaped = true; continue; }
+    if (quote) {
+      cur += ch;
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') { quote = ch as "'" | '"'; cur += ch; continue; }
+    if (ch === ";" || ch === "\n") { out.push(cur); cur = ""; continue; }
+    if (ch === "|" || (ch === "&" && p[i + 1] === "&")) {
+      out.push(cur);
+      cur = "";
+      if (ch === "&") i++; // skip second `&` of `&&`
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+
 export function touchesMemory(p: string): boolean {
   // Fast reject: no memory-path substring anywhere → not our concern.
   if (!p.includes(MEMORY_PATH) && !p.includes(TILDE_PATH) && !p.includes(HOME_VAR_PATH)) {
@@ -53,7 +91,7 @@ export function touchesMemory(p: string): boolean {
   // arg, and we pass through. Any other first token (cat/grep/python/curl/
   // node/etc.) means we should intercept — either to route to the virtual
   // mount, or to surface the "unsafe interpreter" guidance message.
-  for (const stage of p.split(/\||;|&&|\|\||\n/)) {
+  for (const stage of splitShellStages(p)) {
     if (!stage.includes(MEMORY_PATH) && !stage.includes(TILDE_PATH) && !stage.includes(HOME_VAR_PATH)) continue;
     const firstToken = stage.trim().split(/\s+/)[0] ?? "";
     if (!AGENT_COMMANDS.has(firstToken)) return true;

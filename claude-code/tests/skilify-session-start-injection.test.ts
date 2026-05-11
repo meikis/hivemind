@@ -305,12 +305,28 @@ describe("OpenClaw skilify worker (mining) wiring", () => {
   it("openclaw skilify spawn lock checks for staleness before refusing to fire", () => {
     // Issue #110: O_CREAT|O_EXCL without staleness check meant an abnormally
     // dead worker (OOM / segfault / host kill) left an empty lock that every
-    // subsequent agent_end skipped on forever. Lock now stamps a timestamp on
-    // create and treats any existing lock older than maxAgeMs as stale.
+    // subsequent agent_end skipped on forever. Lock now stamps a timestamp
+    // on create and treats any existing lock older than maxAgeMs as stale.
+    // Acquisition is atomic via writeFileSync(..., { flag: "wx" }) so a
+    // concurrent acquirer can never observe a zero-byte lock and racily
+    // classify it as stale.
     const src = readFileSync(resolve(BUNDLE_ROOT, "openclaw", "src", "index.ts"), "utf-8");
     expect(src).toMatch(/maxAgeMs\s*=\s*10\s*\*\s*60\s*\*\s*1000/);
-    expect(src).toMatch(/fsWriteFd\(fd,\s*String\(Date\.now\(\)\)\)/);
+    expect(src).toMatch(/fsWriteFile\(lockPath,\s*String\(Date\.now\(\)\),\s*\{\s*flag:\s*"wx"\s*\}\)/);
     expect(src).toMatch(/fsUnlink\(lockPath\)/);
+    // Regression: the unsafe two-step open(O_EXCL)+writeSync sequence is gone.
+    expect(src).not.toMatch(/O_EXCL/);
+  });
+
+  it("openclaw skilify spawn memoizes session_id ONLY after spawn succeeds", () => {
+    // Issue #100 follow-up: if spawnOpenclawSkilifyWorker returns early
+    // (lock contention, missing delegate CLI, config-write fail) the
+    // session_id must NOT be marked as handled — the next agent_end should
+    // retry. spawnOpenclawSkilifyWorker now returns a boolean and the
+    // caller only .add(sid)s on true.
+    const src = readFileSync(resolve(BUNDLE_ROOT, "openclaw", "src", "index.ts"), "utf-8");
+    expect(src).toMatch(/function spawnOpenclawSkilifyWorker\([^)]*\):\s*boolean/);
+    expect(src).toMatch(/if\s*\(spawned\)\s*skilifySpawnedFor\.add\(sid\)/);
   });
 
   it("openclaw checkForUpdate uses a 10s AbortSignal (was too aggressive at 3-5s)", () => {

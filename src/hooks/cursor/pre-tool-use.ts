@@ -26,6 +26,7 @@
  *                          command alone for Cursor's own bash to run.
  */
 
+import { randomBytes } from "node:crypto";
 import { readStdin } from "../../utils/stdin.js";
 import { loadConfig } from "../../config.js";
 import { DeeplakeApi } from "../../deeplake-api.js";
@@ -34,6 +35,24 @@ import { parseBashGrep, handleGrepDirect } from "../grep-direct.js";
 import { touchesMemory, rewritePaths } from "../memory-path-utils.js";
 import { readVirtualPathContent } from "../virtual-table-query.js";
 const log = (msg: string) => _log("cursor-pre-tool-use", msg);
+
+/**
+ * Pick a heredoc terminator that's guaranteed not to appear on any line of
+ * the payload. A fixed terminator (e.g. `__HIVEMIND_RESULT__`) is unsafe
+ * because the captured memory content is user-controllable: a stored
+ * session message whose body happens to be that exact line would close the
+ * heredoc early, leaving the rest of the content for the shell to execute.
+ * 24 random bytes makes a collision astronomically unlikely, and the
+ * regex-anchored check on the payload guarantees safety even if it occurs.
+ */
+function pickHeredocTerminator(payload: string): string {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const marker = `__HIVEMIND_RESULT_${randomBytes(24).toString("hex")}__`;
+    if (!new RegExp(`^${marker}$`, "m").test(payload)) return marker;
+  }
+  // Astronomically unreachable; tail-call to a longer marker if it ever hits.
+  return `__HIVEMIND_RESULT_${randomBytes(48).toString("hex")}__`;
+}
 
 /**
  * Match a bash `cat <path>` / `head [-n N] <path>` / `tail [-n N] <path>`
@@ -102,7 +121,8 @@ async function main(): Promise<void> {
   );
 
   const respondWith = (result: string, label: string): void => {
-    const echoCmd = `cat <<'__HIVEMIND_RESULT__'\n${result}\n__HIVEMIND_RESULT__`;
+    const terminator = pickHeredocTerminator(result);
+    const echoCmd = `cat <<'${terminator}'\n${result}\n${terminator}`;
     process.stdout.write(JSON.stringify({
       permission: "allow",
       updated_input: { command: echoCmd },
