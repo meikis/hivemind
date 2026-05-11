@@ -1,0 +1,170 @@
+/**
+ * Shared types for the cross-agent E2E harness.
+ *
+ * The harness drives N real agent CLIs through M behavioral cases. Each
+ * (case, agent) tuple is one test point. Drivers know how to spawn one
+ * agent; cases know what assertions hold for one behavior. The runner
+ * orchestrates the matrix.
+ *
+ * Keep this file tiny and dependency-free — every module in the harness
+ * imports it, and circular deps here will haunt later.
+ */
+
+export type AgentId =
+  | "claude-code"
+  | "codex"
+  | "cursor-agent"
+  | "hermes"
+  | "pi";
+
+/**
+ * One agent driver — knows how to install hivemind into a sandboxed HOME
+ * and spawn the underlying CLI with a prompt. Assertions are NOT a driver
+ * concern; the runner reads them off the case and executes them after.
+ */
+export interface AgentDriver {
+  id: AgentId;
+  /**
+   * Install hivemind hooks into the given (tmp) HOME. For agents that
+   * support a session-only plugin flag (e.g. `claude --plugin-dir`), this
+   * may be a no-op and the flag is set in run() instead.
+   */
+  install(home: string, repoRoot: string): Promise<void>;
+  /**
+   * Spawn the CLI with the prompt, capture stdout/stderr/exitCode/duration.
+   * Driver MUST set HOME=home and forward the provider env vars in
+   * `opts.providerEnv`. Driver MAY parse a cost line from stdout into
+   * `costCents` — null is acceptable when the agent doesn't print cost.
+   */
+  run(prompt: string, opts: RunOpts): Promise<RunResult>;
+  /**
+   * Optional teardown. Most agents have no cleanup beyond rm -rf HOME,
+   * which the runner does. Use only when the agent left state OUTSIDE the
+   * sandboxed HOME (e.g. a global config file).
+   */
+  cleanup?(home: string): Promise<void>;
+}
+
+export interface RunOpts {
+  home: string;
+  repoRoot: string;
+  /** session_id to write into the credentials sidecar / propagate downstream */
+  sessionId: string;
+  /** Provider keys to forward into the spawned process. Driver picks what it needs. */
+  providerEnv: ProviderEnv;
+  /** Hard wall-clock cap on the spawn. Defaults to 90s per case. */
+  timeoutMs?: number;
+}
+
+export interface ProviderEnv {
+  ANTHROPIC_API_KEY?: string;
+  OPENAI_API_KEY?: string;
+  GOOGLE_API_KEY?: string;
+}
+
+export interface RunResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  sessionId: string;
+  costCents: number | null;
+  durationMs: number;
+}
+
+/**
+ * One behavioral case the matrix asserts on. Cases are agent-agnostic —
+ * the same prompt + assertions run against every driver (unless skipFor
+ * names the agent explicitly with a comment).
+ */
+export interface E2ECase {
+  id: string;
+  description: string;
+  prompt: string;
+  /**
+   * Optional pre-run hook — e.g. seed a row in the memory table so the
+   * agent has something to retrieve. Receives the tmp HOME + a configured
+   * DeeplakeApi instance.
+   */
+  setup?: (ctx: CaseContext) => Promise<void>;
+  assertions: Assertion[];
+  /** Agents this case can't reach (with rationale in a comment next to the entry). */
+  skipFor?: AgentId[];
+}
+
+export interface CaseContext {
+  home: string;
+  sessionId: string;
+  agent: AgentId;
+  /** Test creds for the e2e workspace. Drivers + setup share this. */
+  creds: TestCredentials;
+}
+
+export interface TestCredentials {
+  apiUrl: string;
+  token: string;
+  orgId: string;
+  orgName?: string;
+  workspaceId: string;
+  /** sessions table name in the e2e workspace. */
+  sessionsTable: string;
+  /** memory table name in the e2e workspace. */
+  memoryTable: string;
+}
+
+/**
+ * Assertion vocabulary, intentionally narrow for v1. LLM-as-judge is
+ * deferred — plugin side-effect tests don't need it. Each assertion gets
+ * the case context + the agent's run result + a query helper bound to the
+ * test workspace.
+ */
+export type Assertion =
+  | StdoutContainsAssertion
+  | StdoutMatchesAssertion
+  | SelectFromDbAssertion
+  | HookLogContainsAssertion;
+
+export interface StdoutContainsAssertion {
+  type: "stdout-contains";
+  /** Substring the agent's stdout MUST contain after the run. */
+  substring: string;
+  /** Optional label for the failure message; defaults to `substring`. */
+  label?: string;
+}
+
+export interface StdoutMatchesAssertion {
+  type: "stdout-matches";
+  regex: RegExp;
+  label?: string;
+}
+
+export interface SelectFromDbAssertion {
+  type: "select-from-db";
+  /** SQL to run against the test workspace. Use `${sid}` for the session_id placeholder. */
+  sql: (ctx: AssertionContext) => string;
+  /** Throws if the returned rows don't match expectations. */
+  expect: (rows: Array<Record<string, unknown>>) => void;
+  label?: string;
+}
+
+export interface HookLogContainsAssertion {
+  type: "hook-log-contains";
+  /** Substring that must appear in ${home}/.deeplake/hook-debug.log after the run. */
+  substring: string;
+  label?: string;
+}
+
+export interface AssertionContext {
+  ctx: CaseContext;
+  run: RunResult;
+}
+
+export interface MatrixResult {
+  case: string;
+  agent: AgentId;
+  passed: boolean;
+  /** Reason for failure, or null on pass. */
+  failure: string | null;
+  costCents: number | null;
+  durationMs: number;
+  sessionId: string;
+}
