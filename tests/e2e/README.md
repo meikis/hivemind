@@ -47,7 +47,7 @@ Other env vars:
 - `OPENAI_API_KEY` — needed for codex + cursor-agent.
 - `GOOGLE_API_KEY` — needed for hermes + pi.
 - `HIVEMIND_E2E_WORKSPACE_NAME` — override the default `hivemind_e2e_test` workspace name (mode 2 only).
-- `HIVEMIND_E2E_TABLE_SUFFIX` — appended to sessions/memory table names. Use `HIVEMIND_E2E_TABLE_SUFFIX=$(whoami)` locally so two devs running concurrently don't collide on the same row paths.
+- `HIVEMIND_E2E_TABLE_SUFFIX` — appended to sessions/memory table names (e.g. `sessions_<suffix>`). Use this only if the e2e workspace deliberately has per-dev tables; concurrent runs do NOT collide on row paths because every session_id embeds a unique runId timestamp (see `sandbox.ts:buildSessionId`).
 
 A missing provider key results in a **skip** (not a failure) for that agent's points, with the reason printed inline. The exit code stays 0 unless an actually-run point fails an assertion.
 
