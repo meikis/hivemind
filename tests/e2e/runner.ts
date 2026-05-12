@@ -25,6 +25,8 @@
  */
 
 import { resolve, dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type {
   AgentDriver,
@@ -208,10 +210,37 @@ function fail(msg: string): never {
   process.exit(2);
 }
 
+/**
+ * Pre-flight: build the bundle if it's missing. The non-claude drivers
+ * spawn `node bundle/cli.js <agent> install` to install hivemind into
+ * the tmp HOME — a missing bundle blocks every point of the matrix.
+ * Auto-building here makes `npm run e2e` a single command from a fresh
+ * checkout: no separate `npm run build` step, no "I forgot to build"
+ * failures with a confusing per-agent stderr.
+ *
+ * Honor `HIVEMIND_E2E_SKIP_BUILD=1` to opt out (useful when iterating
+ * on the harness itself and the bundle hasn't changed).
+ */
+function ensureBundleBuilt(repoRoot: string): void {
+  if (process.env.HIVEMIND_E2E_SKIP_BUILD === "1") return;
+  const bundlePath = resolve(repoRoot, "bundle", "cli.js");
+  if (existsSync(bundlePath)) return;
+  console.log("⚙ bundle/cli.js missing — running `npm run build`...");
+  try {
+    execFileSync("npm", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
+  } catch (e: unknown) {
+    fail(
+      `\`npm run build\` failed: ${e instanceof Error ? e.message : String(e)}. ` +
+      `Run it manually, then retry \`npm run e2e\`.`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const here = dirname(fileURLToPath(import.meta.url));
   const repoRoot = resolve(here, "..", "..");
+  if (!args.list) ensureBundleBuilt(repoRoot);
 
   // Filter cases / agents per CLI flags.
   const cases = args.case

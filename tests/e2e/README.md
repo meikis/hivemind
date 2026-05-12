@@ -12,26 +12,34 @@ Cursor IDE GUI inside the Snap sandbox and OpenClaw gateway live in tier 2 — s
 
 ## Running it
 
-### Locally
+**Steady state: one command.**
 
 ```bash
-# One full pass of all cases × all agents — ~10 minutes, ~$1.50 in API
 npm run e2e
+```
 
-# Single case across all agents
+That's it. The runner auto-resolves credentials (operator's logged-in state or `HIVEMIND_E2E_CREDS_JSON`), auto-builds `bundle/cli.js` if it's missing, auto-skips any agent with a missing provider key, and DELETEs the rows it wrote before exiting. No separate `npm install` / `npm run build` / "did I switch workspace?" steps.
+
+**Other invocations:**
+
+```bash
+# Print the matrix without spawning anything (free, no creds needed)
+npm run e2e -- --list
+
+# Single case across all agents — narrow the blast radius
 npm run e2e -- --case 02-cat-index-md
 
 # Single agent across all cases
 npm run e2e -- --agent claude-code
 
-# Single point — fastest dev loop
+# Single point — fastest dev loop, ~$0.01-0.05
 npm run e2e -- --case 01-capture-smoke --agent claude-code
-
-# Print the matrix without spawning anything
-npm run e2e -- --list
 
 # Leave tmp HOMEs on disk for inspection
 npm run e2e -- --keep-sandbox
+
+# Skip the auto-build (when iterating on the harness itself and the bundle is current)
+HIVEMIND_E2E_SKIP_BUILD=1 npm run e2e
 ```
 
 Test workspace resolution is **automatic** — two modes, evaluated in order:
@@ -144,15 +152,23 @@ After each case:
 
 A daily cron in the test workspace sweeps `WHERE creation_date < now() - interval '24h' AND agent ILIKE 'e2e-%'` as belt-and-suspenders against killed runs.
 
-## Why this isn't run on every PR
+## Coverage today + growth target
 
-Three reasons:
+The matrix ships with **4 seed cases** — that's a smoke level, not real coverage. Treat it the way the source test suite was treated when it had 100 tests: a foundation. As features ship, **every new behavioral surface should add a case**. Rough target: ≥1 case per shipped behavior, ≥2 for high-risk surfaces (hook loader, capture INSERT, virtual mount, session_id propagation). Adding a case is one file in `tests/e2e/cases/` + one line in `matrix.ts`; the matrix runs it against every agent automatically.
 
-1. **Cost** — every run is ~$1.50 in provider API calls. PR-gating × dozens of PRs/day = real money.
+A new behavior without a matrix case is the same situation as a new code path without a unit test — fine for a one-off, a slow leak in coverage at scale.
+
+## Why this isn't run on every PR (yet)
+
+Three reasons stand today:
+
+1. **Cost** — every run is ~$1.50 in provider API calls at 4 cases × 5 agents. PR-gating × dozens of PRs/day = real money.
 2. **Flake surface** — upstream agent CLIs change flag shapes between minor releases. A PR unrelated to e2e would gate-fail because hermes 1.4.3 renamed `--yolo`.
-3. **Wall time** — ~10 minutes vs the current 23-second `npm test`. Slows the merge loop for marginal incremental value (most regressions also surface in unit tests).
+3. **Wall time** — ~10 minutes at current case count vs the 23-second `npm test`. Slows the merge loop for marginal incremental value while coverage is thin.
 
-Once we have a week of stable nightly runs and a flake budget < 5%, we can promote to PR-gating with a path filter on `src/hooks/**` etc. (separate PR.)
+**Promotion criteria.** When the matrix has (a) stable coverage across a week of clean manual runs, (b) at least one case per major behavioral surface, and (c) a flake budget < 5% over that week, promote the workflow trigger from `workflow_dispatch` to PR-gating with a path filter on `src/hooks/**` / `openclaw/src/**` / bundle outputs. Mirrors how `npm test` + coverage thresholds gate today; the matrix becomes the equivalent gate for cross-agent behavior. That promotion lives in its own PR, with the cadence flip documented in the cost summary of a representative week of nightlies.
+
+Until then, run it manually before any release — the harness is the canonical replacement for the multi-hour cross-agent test pass.
 
 ## What this matrix does NOT cover
 
