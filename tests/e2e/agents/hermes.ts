@@ -16,6 +16,7 @@ import { installOrThrow } from "./install-via-cli.js";
 
 export const hermesDriver: AgentDriver = {
   id: "hermes",
+  providerKey: "GOOGLE_API_KEY",
   async install(home, repoRoot) {
     await installOrThrow("hermes", home, repoRoot);
   },

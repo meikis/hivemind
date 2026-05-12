@@ -39,4 +39,9 @@ export const sessionStartInjectCase: E2ECase = {
       label: "agent recalls sessions/ (or .jsonl) tier",
     },
   ],
+  // OpenClaw injects its discoverability via openclaw/skills/SKILL.md
+  // through a different mechanism (gateway skill loader, not session-start
+  // hook). The "is the SKILL body in the system prompt" question is covered
+  // by cases/08-openclaw-tools.ts's before_prompt_build assertion.
+  skipFor: ["openclaw"],
 };

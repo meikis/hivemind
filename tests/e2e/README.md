@@ -1,14 +1,42 @@
-# Cross-agent E2E matrix (tier 1)
+# Cross-agent E2E matrix
 
-This directory drives the five headless agent CLIs we support — claude-code, codex, cursor-agent, hermes, pi — through real prompts against a real Deeplake workspace, and asserts on real side effects (DB rows, hook log lines, captured stdout, inject text). It's the layer that catches plugin bugs that source + bundle tests can't, like:
+This directory drives **all six** agent runtimes hivemind supports — claude-code, codex, cursor-agent, hermes, pi, openclaw — through real prompts against a real Deeplake workspace, and asserts on real side effects (DB rows, hook log lines, captured stdout, inject text, tool-call results). It's the layer that catches plugin bugs that source + bundle tests can't, like:
 
 - a hook bundle that imports correctly but throws at runtime under one agent's loader,
 - a per-agent install path that drifted out of sync with the runtime expectation,
-- a cross-agent inconsistency where claude-code returns the synthesized index but cursor-agent ENOENTs.
+- a cross-agent inconsistency where claude-code returns the synthesized index but cursor-agent ENOENTs,
+- a SQL escape bug in capture that silently corrupts unicode content on JSONB roundtrip,
+- a missing-table self-heal regression that drops the very first capture after a fresh workspace setup.
 
-The matrix is **(plugin behavior × agent runtime)**. Add a new shipped behavior → add one case file → it's automatically asserted against all five agents.
+The matrix is **(plugin behavior × agent runtime)**. Add a new shipped behavior → add one case file → it's automatically asserted against every applicable agent.
 
-Cursor IDE GUI inside the Snap sandbox and OpenClaw gateway live in tier 2 — separate infra, separate matrix (`tests/e2e-tier2/`, not built yet). Issues that only show up in those runtimes are flagged in the case docstring with `skipFor`.
+## Agent shapes (not all six are CLIs)
+
+| Agent | Driver shape | How `run()` works |
+|---|---|---|
+| claude-code | subprocess | `claude -p --plugin-dir <bundle> --allowedTools ...` |
+| codex | subprocess | `codex exec -m gpt-5-mini <prompt>` |
+| cursor-agent | subprocess | `cursor-agent --print --force --model gpt-5-mini` |
+| hermes | subprocess | `hermes -z <prompt> --provider google --yolo` |
+| pi | subprocess | `pi --print --provider google --model gemini-2.5-flash` |
+| **openclaw** | **programmatic** | OpenClaw is a gateway, not a CLI. Driver loads the installed plugin module from `~/.openclaw/extensions/hivemind/dist/index.js`, provides a fake `pluginApi` that captures registered handlers + tools, then fires synthetic events (`agent_end` for capture cases) or invokes registered tools directly (`hivemind_search` / `hivemind_read` for tool cases). Plugin code paths run end-to-end — only the gateway's own event parsing / multi-event ordering / concurrency are out of scope (covered by openclaw's own tests, not ours). |
+
+## Case coverage map
+
+Each case asserts on a specific behavioral surface, mapped back to `RELEASE_CHECKLIST.md`:
+
+| Case | Surface | Applies to | Skipped on (reason) |
+|---|---|---|---|
+| `01-capture-smoke` | One turn → one row in sessions (checklist §2 happy path) | all 6 | — |
+| `02-cat-index-md` | `cat ~/.deeplake/memory/index.md` → virtual index (§4 discoverability via Read) | 5 CLI | openclaw (no bash; equivalent via `hivemind_read` in case 08) |
+| `03-grep-memory-summaries` | `grep` routes through SQL fast-path with seeded sentinel (§4 search) | 5 CLI | openclaw (no bash; equivalent via `hivemind_search` in case 08) |
+| `04-session-start-inject` | 3-tier text visible in agent context (§4 SessionStart inject) | 5 CLI | openclaw (different mechanism via openclaw/skills/SKILL.md) |
+| `05-sql-injection-probe` | Injection payload doesn't drop the memory table (§5 SQL identifiers + strings) | all 6 | — |
+| `06-missing-table-self-heal` | Lazy CREATE TABLE IF NOT EXISTS on first INSERT after drop (§6 backend quirks) | all 6 | — |
+| `07-unicode-roundtrip` | Emoji + RTL + smart quotes + backslashes survive JSONB roundtrip byte-for-byte (§2 edge content) | all 6 | — |
+| `08-openclaw-tools` | `hivemind_search` returns seeded sentinel via openclaw tool registration (§3 openclaw row + §4 openclaw discoverability) | openclaw | 5 CLI (they don't register MCP tools the harness invokes directly; equivalents in 02/03) |
+
+Total: **48 matrix points** (40 live, 8 explicitly skipped with rationale).
 
 ## Running it
 
@@ -154,9 +182,20 @@ A daily cron in the test workspace sweeps `WHERE creation_date < now() - interva
 
 ## Coverage today + growth target
 
-The matrix ships with **4 seed cases** — that's a smoke level, not real coverage. Treat it the way the source test suite was treated when it had 100 tests: a foundation. As features ship, **every new behavioral surface should add a case**. Rough target: ≥1 case per shipped behavior, ≥2 for high-risk surfaces (hook loader, capture INSERT, virtual mount, session_id propagation). Adding a case is one file in `tests/e2e/cases/` + one line in `matrix.ts`; the matrix runs it against every agent automatically.
+The matrix ships with **8 cases** covering each major behavioral surface in `RELEASE_CHECKLIST.md` §2 / §3 / §4 / §5 / §6 that an e2e harness can deterministically assert on. As new features ship, **every new behavioral surface should add a case** — adding one is one file in `tests/e2e/cases/` + one line in `matrix.ts`; the matrix runs it against every applicable agent automatically.
 
 A new behavior without a matrix case is the same situation as a new code path without a unit test — fine for a one-off, a slow leak in coverage at scale.
+
+### What the matrix does NOT cover (and shouldn't)
+
+Some checklist items aren't e2e-deterministic by nature:
+
+- **§6 UPDATE coalescing** — two rapid UPDATEs on the same row drop one silently with `row_count: 0`. Reproducing this in a deterministic test requires precise timing in a single connection; covered by unit tests around the affected helpers, not the agent runtime.
+- **§3 async hook completion timing** — `claude -p` doesn't block on the Stop hook, so post-exit async work can be killed mid-flight. Asserting on "the row landed *after* the parent exited" is a race that doesn't reliably reproduce on CI hardware. Best handled at source level with timing-aware fakes.
+- **§3 per-agent CLI dispatch model name** — "did claude get `haiku-3-5` and codex get `gpt-5-codex-mini`" is a dispatch-config check, not a runtime assertion. Covered by source tests that scan the agent's argv.
+- **§1 / §8 unit + bundle scans** — by design, those are the `npm test` layer's job. The e2e matrix is for cross-agent runtime behavior, not bundle byte-checks.
+
+These are documented here so future contributors don't add a brittle case for a problem unit tests can solve more reliably.
 
 ## Why this isn't run on every PR (yet)
 
@@ -172,11 +211,22 @@ Until then, run it manually before any release — the harness is the canonical 
 
 ## What this matrix does NOT cover
 
-- **OpenClaw gateway** — tier 2 (no `openclaw -p <prompt>` CLI).
-- **Cursor IDE GUI inside Snap** — tier 2 (issue-class that only shows up under the Snap sandbox; needs a long-lived test VM).
-- **Pure source-level logic** — tests that don't actually need an agent runtime stay as vitest unit tests in `claude-code/tests/`. Don't pad the matrix with cases the agent runtime adds no signal to.
+- **Cursor IDE GUI inside Snap** — a fundamentally different runtime (graphical session, snap sandbox); needs a long-lived test VM + Xvfb. Out of scope for an in-repo harness. Bugs that only surface in the GUI runtime (cursor-snap detached spawns, GUI-only auth flows) belong in a separate manual or VM-based pipeline.
+- **Pure source-level logic** — tests that don't actually need an agent runtime stay as vitest unit tests in `claude-code/tests/`. Don't pad the matrix with cases the agent runtime adds no signal to (see "What the matrix does NOT cover" earlier in this doc for specific examples).
 - **Model-quality regression** — we test what the *plugin* does, not what the model says. Asserting "agent gave a good answer" is out of scope; that's a separate evaluation problem with a separate tool.
 
-## Adding tier-2 cases
+## OpenClaw driver caveats
 
-Don't put them here. Create `tests/e2e-tier2/` with the same matrix shape (driver + case + runner). Tier 2 needs separate infrastructure (long-lived VM, Xvfb, tmux for OpenClaw) and we don't want it gating the tier-1 invocation surface.
+The openclaw driver loads the installed plugin module and fires events programmatically rather than spinning up a real gateway. What this exercises:
+
+- Hook handler code (`agent_end` capture, `before_prompt_build` inject, etc.) end-to-end against the real Deeplake API.
+- Plugin tool registration and `execute()` paths (`hivemind_search`, `hivemind_read`, `hivemind_index`).
+- Install-side surface (the plugin lands at the expected path with the expected files).
+
+What it doesn't exercise:
+
+- The gateway's own event parser (the way upstream agent_end payloads are deserialized).
+- Multi-event ordering across concurrent sessions.
+- Real gateway lifecycle (boot, ready signal, shutdown).
+
+Those gateway-side concerns have their own tests in the openclaw repo. If a future bug class lives specifically in the gateway↔plugin seam, add a dedicated case here that spawns the gateway as a subprocess — the harness is structured to accept that without changing its public shape.

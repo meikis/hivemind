@@ -45,8 +45,8 @@ export interface InstallResult {
  * subprocess's exit code; caller decides whether to throw.
  *
  * `agentArg` is the CLI subcommand name, which differs slightly from our
- * internal AgentId for openclaw (`claw` not `openclaw`). For the five
- * tier-1 agents the mapping is identity.
+ * internal AgentId for openclaw (`claw` not `openclaw`). For the other
+ * five agents the mapping is identity.
  */
 export function runInstallerSubprocess(
   agentArg: string,

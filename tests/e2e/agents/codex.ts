@@ -16,6 +16,7 @@ import { installOrThrow } from "./install-via-cli.js";
 
 export const codexDriver: AgentDriver = {
   id: "codex",
+  providerKey: "OPENAI_API_KEY",
   async install(home, repoRoot) {
     await installOrThrow("codex", home, repoRoot);
   },

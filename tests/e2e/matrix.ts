@@ -15,10 +15,15 @@ import { codexDriver } from "./agents/codex.js";
 import { cursorAgentDriver } from "./agents/cursor-agent.js";
 import { hermesDriver } from "./agents/hermes.js";
 import { piDriver } from "./agents/pi.js";
+import { openclawDriver } from "./agents/openclaw.js";
 import { captureSmokeCase } from "./cases/01-capture-smoke.js";
 import { catIndexMdCase } from "./cases/02-cat-index-md.js";
 import { grepMemorySummariesCase } from "./cases/03-grep-memory-summaries.js";
 import { sessionStartInjectCase } from "./cases/04-session-start-inject.js";
+import { sqlInjectionProbeCase } from "./cases/05-sql-injection-probe.js";
+import { missingTableSelfHealCase } from "./cases/06-missing-table-self-heal.js";
+import { unicodeRoundtripCase } from "./cases/07-unicode-roundtrip.js";
+import { openclawToolsCase } from "./cases/08-openclaw-tools.js";
 
 export const ALL_DRIVERS: AgentDriver[] = [
   claudeCodeDriver,
@@ -26,6 +31,7 @@ export const ALL_DRIVERS: AgentDriver[] = [
   cursorAgentDriver,
   hermesDriver,
   piDriver,
+  openclawDriver,
 ];
 
 export const ALL_CASES: E2ECase[] = [
@@ -33,6 +39,10 @@ export const ALL_CASES: E2ECase[] = [
   catIndexMdCase,
   grepMemorySummariesCase,
   sessionStartInjectCase,
+  sqlInjectionProbeCase,
+  missingTableSelfHealCase,
+  unicodeRoundtripCase,
+  openclawToolsCase,
 ];
 
 export interface MatrixPoint {

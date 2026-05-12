@@ -61,4 +61,8 @@ export const grepMemorySummariesCase: E2ECase = {
       label: "agent received the sentinel row from the SQL fast-path",
     },
   ],
+  // OpenClaw doesn't shell out to grep — its agent's search path is the
+  // hivemind_search MCP tool. The equivalent assertion lives in
+  // cases/08-openclaw-tools.ts (which invokes that tool directly).
+  skipFor: ["openclaw"],
 };

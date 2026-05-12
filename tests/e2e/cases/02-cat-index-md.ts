@@ -11,9 +11,8 @@
  * is stable across versions — we anchor on the `Created` / `Last Updated`
  * column names that the virtual index always renders.
  *
- * Skip claude-code only if a real index can't be synthesized — currently
- * none of the tier-1 agents need to be skipped; the virtual mount is
- * uniformly wired.
+ * Skipped on openclaw (its read surface is the hivemind_read MCP tool;
+ * see case 08). Every CLI agent runs this case.
  */
 
 import type { E2ECase } from "../types.js";
@@ -37,4 +36,8 @@ export const catIndexMdCase: E2ECase = {
       label: "agent saw the virtual index's table headers",
     },
   ],
+  // OpenClaw doesn't shell out to bash — its agent's read path is the
+  // hivemind_read MCP tool. The equivalent assertion against openclaw
+  // lives in cases/08-openclaw-tools.ts.
+  skipFor: ["openclaw"],
 };

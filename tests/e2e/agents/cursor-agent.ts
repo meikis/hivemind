@@ -16,6 +16,7 @@ import { installOrThrow } from "./install-via-cli.js";
 
 export const cursorAgentDriver: AgentDriver = {
   id: "cursor-agent",
+  providerKey: "OPENAI_API_KEY",
   async install(home, repoRoot) {
     await installOrThrow("cursor", home, repoRoot);
   },

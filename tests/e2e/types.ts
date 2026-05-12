@@ -15,7 +15,17 @@ export type AgentId =
   | "codex"
   | "cursor-agent"
   | "hermes"
-  | "pi";
+  | "pi"
+  | "openclaw";
+
+/**
+ * Which provider env var an agent's spawn requires. `null` means the
+ * driver runs without a model call (e.g. openclaw fires hook events
+ * programmatically against its registered handlers — no LLM in the
+ * loop). The runner uses this to decide whether a missing key is a
+ * skip or doesn't apply at all.
+ */
+export type ProviderKey = "ANTHROPIC_API_KEY" | "OPENAI_API_KEY" | "GOOGLE_API_KEY" | null;
 
 /**
  * One agent driver — knows how to install hivemind into a sandboxed HOME
@@ -25,16 +35,25 @@ export type AgentId =
 export interface AgentDriver {
   id: AgentId;
   /**
+   * Provider env var this driver's run() requires. Null means run() does
+   * not call any LLM — typically because the "agent" is a plugin host
+   * (openclaw) whose driver fires registered hook handlers programmatically
+   * instead of spawning a binary.
+   */
+  providerKey: ProviderKey;
+  /**
    * Install hivemind hooks into the given (tmp) HOME. For agents that
    * support a session-only plugin flag (e.g. `claude --plugin-dir`), this
    * may be a no-op and the flag is set in run() instead.
    */
   install(home: string, repoRoot: string): Promise<void>;
   /**
-   * Spawn the CLI with the prompt, capture stdout/stderr/exitCode/duration.
-   * Driver MUST set HOME=home and forward the provider env vars in
-   * `opts.providerEnv`. Driver MAY parse a cost line from stdout into
-   * `costCents` — null is acceptable when the agent doesn't print cost.
+   * Spawn the CLI with the prompt (or, for openclaw, fire a synthetic
+   * agent_end event whose user message contains the prompt text). Capture
+   * stdout/stderr/exitCode/duration. Driver MUST set HOME=home for any
+   * subprocess it spawns. Driver MAY parse a cost line from stdout into
+   * `costCents` — null is acceptable when the agent doesn't print cost
+   * (or never makes a model call).
    */
   run(prompt: string, opts: RunOpts): Promise<RunResult>;
   /**

@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Tier-1 cross-agent E2E runner.
+ * Cross-agent E2E runner.
  *
  * Usage:
  *   tsx tests/e2e/runner.ts                          # run full matrix
@@ -66,7 +66,7 @@ function parseArgs(argv: string[]): CliArgs {
 
 function printHelp(): void {
   console.log(`\
-hivemind tier-1 e2e runner
+hivemind cross-agent e2e runner
 
 Usage:
   tsx tests/e2e/runner.ts [--case <id>] [--agent <id>] [--keep-sandbox] [--list]
@@ -104,19 +104,12 @@ function loadProviderEnv(): ProviderEnv {
 }
 
 function isReady(agent: AgentDriver, env: ProviderEnv): { ready: boolean; reason: string | null } {
-  // Conservative gating: each driver needs its provider's key. We could
-  // be more permissive (e.g. cursor-agent + hermes can use multiple
-  // providers) but the default models we use are specific.
-  switch (agent.id) {
-    case "claude-code":
-      return env.ANTHROPIC_API_KEY ? { ready: true, reason: null } : { ready: false, reason: "ANTHROPIC_API_KEY not set" };
-    case "codex":
-    case "cursor-agent":
-      return env.OPENAI_API_KEY ? { ready: true, reason: null } : { ready: false, reason: "OPENAI_API_KEY not set" };
-    case "hermes":
-    case "pi":
-      return env.GOOGLE_API_KEY ? { ready: true, reason: null } : { ready: false, reason: "GOOGLE_API_KEY not set" };
-  }
+  // Drivers with providerKey === null don't make any model API call (e.g.
+  // openclaw fires hook events programmatically); never gated on env.
+  if (agent.providerKey === null) return { ready: true, reason: null };
+  const key = env[agent.providerKey];
+  if (key) return { ready: true, reason: null };
+  return { ready: false, reason: `${agent.providerKey} not set` };
 }
 
 async function runPoint(

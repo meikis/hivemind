@@ -40,6 +40,12 @@ export function parseCostCents(agent: AgentId, stdout: string): number | null {
       case "cursor-agent":
       case "hermes":
         return [];
+      case "openclaw":
+        // OpenClaw driver fires plugin code directly with no model call,
+        // so there's no cost line to parse. Driver hard-codes costCents=0
+        // and never invokes this helper, but the case is here for
+        // exhaustiveness.
+        return [];
     }
   })();
   // Generic fallback that any agent might happen to print.

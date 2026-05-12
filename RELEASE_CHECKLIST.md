@@ -62,9 +62,10 @@ For every new SQL-touching surface:
 - [ ] Run with a **missing table name** and confirm graceful fallback (no stack trace)
 - [ ] Run with an **invalid identifier** (`bad-name-with-dashes`) and confirm `sqlIdent` rejects it before any SQL fires
 
-**Canonical e2e**: `npm run e2e` (tier 1, in-repo). Drives the five
-headless agent CLIs through a behavioral matrix and asserts on real
-side effects (DB rows, hook log lines, captured stdout, inject text).
+**Canonical e2e**: `npm run e2e` (in-repo). Drives all six agent runtimes
+(five CLI subprocess, OpenClaw via programmatic event firing) through a
+behavioral matrix and asserts on real side effects (DB rows, hook log
+lines, captured stdout, inject text, tool results).
 Adding a new behavioral assertion is one file in `tests/e2e/cases/`; the
 matrix runs it against every agent automatically. See `tests/e2e/README.md`
 for how to add cases and what the harness covers vs not.
@@ -127,17 +128,17 @@ For every feature that runs inside a hook (worker, capture, session-end):
   - Hermes → `hermes -z` (uses OpenRouter under the hood, NOT claude)
   - Pi → no separate gate yet; see the Pi extension's worker section
   - **Never hard-code `claude` as the gate** — users without claude installed will silently get 0 results across the agents that have a gate
-- [ ] e2e matrix runs the feature end-to-end **once per agent** with a representative prompt that should trigger the new feature (Pi included if applicable). Default path: add a case to `tests/e2e/cases/` and `npm run e2e` covers all five tier-1 agents automatically; Pi / OpenClaw fall under tier-2 unless your case targets only the five hook-driven agents.
+- [ ] e2e matrix runs the feature end-to-end **once per applicable agent** with a representative prompt that should trigger the new feature. Default path: add a case to `tests/e2e/cases/` and `npm run e2e` covers all six agents automatically (including OpenClaw via programmatic event firing — see `tests/e2e/README.md` "Agent shapes"). Cases that only make sense for one subset (e.g. CLI-only bash-shell-out, or openclaw-only tool registration) use `skipFor: [...]` with rationale.
 - [ ] Verify the worker / hook actually fires for every agent (check Deeplake table for the inserted row, not just "no error"). The `select-from-db` assertion type in the matrix is the canonical way to do this.
 - [ ] If the feature uses async hooks (Stop / SessionEnd), check both: parent process exits before async work completes is a real risk and has bitten us before (`claude -p` does not block on Stop hook)
 
 Reference: `/tmp/skilify-e2e-matrix.mjs` exercised gate CREATE / MERGE / SKIP across the four hook-driven agents — but did NOT cover `pull` (gap closed by the dedicated pull e2e in Section 2), and did NOT cover Pi or OpenClaw at all (gap closed by the Pi inject + OpenClaw SKILL.md additions in commit `9d74db6`).
 
 The new in-repo `tests/e2e/` matrix replaces the per-feature scratch
-approach for the five hook-driven agents. Trigger with `npm run e2e`
-from any branch that has the harness merged in. Tier-2 agents
-(Pi extension under heavy lifecycle, OpenClaw gateway) are still
-deferred — track them under `tests/e2e-tier2/` when built.
+approach for all six agents — five CLI agents via subprocess spawn, and
+OpenClaw via programmatic event firing against its installed plugin (see
+`tests/e2e/README.md` "Agent shapes" and "OpenClaw driver caveats" for
+what that does and doesn't cover). Trigger with `npm run e2e`.
 
 ---
 
@@ -234,7 +235,7 @@ Examples in tree:
 - [ ] `npm test` → all green, count went up by the expected amount
 - [ ] `npm run build` → "Built: N CC + N Codex + …" line shows expected bundle count, no errors
 - [ ] Per-feature e2e script → 100% PASS (or in-matrix case, see below)
-- [ ] `npm run e2e` → tier-1 matrix green across all five agents (skip on missing provider keys is fine; failure is not). New behavioral surfaces should have a case in `tests/e2e/cases/` — aim for ≥1 case per surface, ≥2 for high-risk (hook loader, capture INSERT, virtual mount, session_id propagation). The matrix is the cross-agent equivalent of `npm test`'s coverage gate; once we have ≥1 case per shipped behavior and a clean week of manual runs, the workflow flips from `workflow_dispatch` to PR-gating (separate PR)
+- [ ] `npm run e2e` → matrix green across all six agents (skip on missing provider keys is fine; failure is not). New behavioral surfaces should have a case in `tests/e2e/cases/` — aim for ≥1 case per surface, ≥2 for high-risk (hook loader, capture INSERT, virtual mount, session_id propagation). The matrix is the cross-agent equivalent of `npm test`'s coverage gate; once we have ≥1 case per shipped behavior and a clean week of manual runs, the workflow flips from `workflow_dispatch` to PR-gating (separate PR)
 - [ ] CodeRabbit Critical + Major addressed
 - [ ] PR description has Summary + Test plan + e2e PASS counts
 - [ ] Sandbox tables dropped, fakeHome dirs cleaned, no scratch state left over

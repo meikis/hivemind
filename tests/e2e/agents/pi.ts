@@ -14,6 +14,7 @@ import { installOrThrow } from "./install-via-cli.js";
 
 export const piDriver: AgentDriver = {
   id: "pi",
+  providerKey: "GOOGLE_API_KEY",
   async install(home, repoRoot) {
     await installOrThrow("pi", home, repoRoot);
   },

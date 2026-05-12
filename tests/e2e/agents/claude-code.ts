@@ -21,6 +21,7 @@ const SESSION_LINE = /session=([0-9a-f-]{8,})/i;
 
 export const claudeCodeDriver: AgentDriver = {
   id: "claude-code",
+  providerKey: "ANTHROPIC_API_KEY",
   async install(_home, _repoRoot) {
     // No-op: --plugin-dir handles loading per session. We deliberately
     // do NOT go through `claude plugin marketplace add` here — that
