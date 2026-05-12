@@ -107,7 +107,8 @@ function writeQueue(q) {
 }
 
 // dist/src/notifications/state.js
-import { readFileSync as readFileSync3, writeFileSync as writeFileSync3, renameSync as renameSync2, mkdirSync as mkdirSync3 } from "node:fs";
+import { closeSync, openSync, readFileSync as readFileSync3, writeFileSync as writeFileSync3, renameSync as renameSync2, mkdirSync as mkdirSync3 } from "node:fs";
+import { createHash } from "node:crypto";
 import { join as join4, resolve as resolve2 } from "node:path";
 import { homedir as homedir4 } from "node:os";
 var log3 = (msg) => log("notifications-state", msg);
@@ -151,6 +152,29 @@ function alreadyShown(state, n) {
   if (!prev)
     return false;
   return prev.dedupKey === JSON.stringify(n.dedupKey);
+}
+function tryClaim(n) {
+  const home = resolve2(homedir4());
+  const claimsDir = join4(home, ".deeplake", "notifications-claims");
+  try {
+    mkdirSync3(claimsDir, { recursive: true, mode: 448 });
+  } catch (e) {
+    log3(`tryClaim mkdir failed: ${e?.message ?? String(e)}`);
+    return true;
+  }
+  const keyHash = createHash("sha256").update(JSON.stringify(n.dedupKey)).digest("hex").slice(0, 12);
+  const safeId = n.id.replace(/[^a-zA-Z0-9_.:-]/g, "_");
+  const claimPath = join4(claimsDir, `${safeId}-${keyHash}`);
+  try {
+    const fd = openSync(claimPath, "wx", 384);
+    closeSync(fd);
+    return true;
+  } catch (e) {
+    if (e?.code === "EEXIST")
+      return false;
+    log3(`tryClaim open failed: ${e?.message ?? String(e)}`);
+    return true;
+  }
 }
 
 // dist/src/notifications/format.js
@@ -457,15 +481,22 @@ async function drainSessionStart(opts) {
         writeQueue({ queue: [] });
       return;
     }
-    const rendered = renderNotifications(fresh);
+    const claimed = fresh.filter((n) => tryClaim(n));
+    if (claimed.length === 0) {
+      if (queue.queue.length > 0)
+        writeQueue({ queue: [] });
+      log7(`all ${fresh.length} notification(s) claimed by another process`);
+      return;
+    }
+    const rendered = renderNotifications(claimed);
     emit(opts.agent, rendered);
     let nextState = state;
-    for (const n of fresh)
+    for (const n of claimed)
       nextState = markShown(nextState, n);
     writeState(nextState);
     if (queue.queue.length > 0)
       writeQueue({ queue: [] });
-    log7(`delivered ${fresh.length} notification(s) to ${opts.agent}`);
+    log7(`delivered ${claimed.length} notification(s) to ${opts.agent}`);
   } catch (e) {
     log7(`drainSessionStart failed: ${e?.message ?? String(e)}`);
   }

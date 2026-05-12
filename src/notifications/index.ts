@@ -17,7 +17,7 @@ import type { Credentials } from "../commands/auth-creds.js";
 import type { Agent, Notification, NotificationContext } from "./types.js";
 import { evaluateRules } from "./rules/registry.js";
 import { readQueue, writeQueue } from "./queue.js";
-import { readState, writeState, alreadyShown, markShown } from "./state.js";
+import { readState, writeState, alreadyShown, markShown, tryClaim } from "./state.js";
 import { renderNotifications } from "./format.js";
 import { emit } from "./delivery/index.js";
 import { fetchBackendNotifications } from "./sources/backend.js";
@@ -68,18 +68,30 @@ export async function drainSessionStart(opts: DrainOptions): Promise<void> {
       return;
     }
 
-    const rendered = renderNotifications(fresh);
+    // Per-notification atomic claim — prevents two concurrent SessionStart
+    // hook invocations (settings.json + marketplace hooks.json both fire)
+    // from emitting the same notification twice. See state.ts:tryClaim.
+    const claimed = fresh.filter(n => tryClaim(n));
+    if (claimed.length === 0) {
+      // Another process claimed every notification before us — silently
+      // skip. The other process is responsible for state persistence.
+      if (queue.queue.length > 0) writeQueue({ queue: [] });
+      log(`all ${fresh.length} notification(s) claimed by another process`);
+      return;
+    }
+
+    const rendered = renderNotifications(claimed);
     emit(opts.agent, rendered);
 
     let nextState = state;
-    for (const n of fresh) nextState = markShown(nextState, n);
+    for (const n of claimed) nextState = markShown(nextState, n);
     writeState(nextState);
 
     // Queue is fully drained whether or not its items were dedup-skipped:
     // they've been read once. If a producer needs to re-enqueue, it re-pushes.
     if (queue.queue.length > 0) writeQueue({ queue: [] });
 
-    log(`delivered ${fresh.length} notification(s) to ${opts.agent}`);
+    log(`delivered ${claimed.length} notification(s) to ${opts.agent}`);
   } catch (e: any) {
     log(`drainSessionStart failed: ${e?.message ?? String(e)}`);
   }

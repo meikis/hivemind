@@ -594,10 +594,7 @@ describe("concurrent drains on shared HOME (cross-instance race)", () => {
     // the drain twice in parallel against the same state file. The atomic
     // write semantics (tmp + rename) mean state ends in a coherent shape;
     // dedup logic keys on creds.savedAt so the second drain reads the
-    // first's persisted state and skips emit. With true concurrency where
-    // both drains read state BEFORE either writes, both can emit — that's
-    // the intended trade-off for v1 (a single duplicate welcome on a
-    // racing pair is acceptable; no torn JSON file is the hard guarantee).
+    // first's persisted state and skips emit.
     registerRule(welcomeRule);
 
     let activeBuffer: string[] = writesA;
@@ -621,6 +618,102 @@ describe("concurrent drains on shared HOME (cross-instance race)", () => {
     // State file is well-formed JSON (atomic write held).
     const stateRaw = readFileSync(statePath(), "utf-8");
     expect(() => JSON.parse(stateRaw)).not.toThrow();
+    vi.restoreAllMocks();
+  });
+});
+
+describe("state.tryClaim (per-notification atomic claim)", () => {
+  it("first call wins and returns true; second call returns false (EEXIST)", async () => {
+    const { tryClaim } = await import("../../src/notifications/state.js");
+    const n: Notification = { id: "test-claim", dedupKey: { week: "2026-W19" }, title: "t", body: "b" };
+    expect(tryClaim(n)).toBe(true);
+    expect(tryClaim(n)).toBe(false);
+  });
+
+  it("different notifications get independent claims", async () => {
+    const { tryClaim } = await import("../../src/notifications/state.js");
+    const a: Notification = { id: "claim-a", dedupKey: { v: 1 }, title: "t", body: "b" };
+    const b: Notification = { id: "claim-b", dedupKey: { v: 1 }, title: "t", body: "b" };
+    expect(tryClaim(a)).toBe(true);
+    expect(tryClaim(b)).toBe(true);
+    expect(tryClaim(a)).toBe(false);
+    expect(tryClaim(b)).toBe(false);
+  });
+
+  it("same id with different dedupKey gets a fresh claim", async () => {
+    const { tryClaim } = await import("../../src/notifications/state.js");
+    const w19: Notification = { id: "weekly", dedupKey: { week: "2026-W19" }, title: "t", body: "b" };
+    const w20: Notification = { id: "weekly", dedupKey: { week: "2026-W20" }, title: "t", body: "b" };
+    expect(tryClaim(w19)).toBe(true);
+    expect(tryClaim(w20)).toBe(true);
+    expect(tryClaim(w19)).toBe(false);
+  });
+
+  it("sanitizes notification ids to safe filename characters", async () => {
+    const { tryClaim } = await import("../../src/notifications/state.js");
+    const n: Notification = { id: "backend:abcd-1234/with weird:chars", dedupKey: { v: 1 }, title: "t", body: "b" };
+    expect(tryClaim(n)).toBe(true);
+    expect(tryClaim(n)).toBe(false);
+  });
+
+  it("fails open (returns true) when claims-dir cannot be created", async () => {
+    // Pivot HOME to a path where mkdir will fail (HOME points at a regular
+    // file, so mkdir of .deeplake/notifications-claims raises ENOTDIR).
+    const { writeFileSync } = await import("node:fs");
+    const sentinel = join(TEMP_HOME, "sentinel-file");
+    writeFileSync(sentinel, "x", "utf-8");
+    const prev = process.env.HOME;
+    process.env.HOME = sentinel;
+    try {
+      const { tryClaim } = await import("../../src/notifications/state.js");
+      const n: Notification = { id: "fail-open-test", dedupKey: { v: 1 }, title: "t", body: "b" };
+      // Fail-open: better to risk a duplicate banner than silence the whole pipeline
+      // because of a transient FS error.
+      expect(tryClaim(n)).toBe(true);
+    } finally {
+      process.env.HOME = prev;
+    }
+  });
+
+  it("fails open (returns true) when openSync raises a non-EEXIST error", async () => {
+    // Bootstrap the claims dir, then revoke its write permission so openSync
+    // raises EACCES, not EEXIST. tryClaim should fall open and return true.
+    const { mkdirSync, chmodSync } = await import("node:fs");
+    const claimsDir = join(TEMP_HOME, ".deeplake", "notifications-claims");
+    mkdirSync(claimsDir, { recursive: true, mode: 0o700 });
+    chmodSync(claimsDir, 0o500); // read+exec but no write
+    try {
+      const { tryClaim } = await import("../../src/notifications/state.js");
+      const n: Notification = { id: "eacces-test", dedupKey: { v: 1 }, title: "t", body: "b" };
+      expect(tryClaim(n)).toBe(true);
+    } finally {
+      // Restore write perms so afterEach can clean up the temp dir.
+      chmodSync(claimsDir, 0o700);
+    }
+  });
+});
+
+describe("drainSessionStart with per-notification claim", () => {
+  it("two parallel drains emit the welcome banner exactly once total (not duplicated)", async () => {
+    let stdoutWrites = 0;
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: any) => {
+      void chunk;
+      stdoutWrites += 1;
+      return true;
+    });
+    registerRule(welcomeRule);
+
+    // True parallelism via Promise.all — both drains call readState before
+    // either writes, so dedup-via-state alone wouldn't catch the duplicate.
+    // The per-notification claim DOES catch it.
+    await Promise.all([
+      drainSessionStart({ agent: "claude-code", creds: FRESH_CREDS }),
+      drainSessionStart({ agent: "claude-code", creds: FRESH_CREDS }),
+    ]);
+
+    // Exactly one of the two drains emitted; the other found the claim
+    // file already taken and skipped.
+    expect(stdoutWrites).toBe(1);
     vi.restoreAllMocks();
   });
 });
