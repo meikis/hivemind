@@ -69,6 +69,7 @@ describe("plugin_version is wired into every agent's capture INSERT", () => {
     ["cursor capture",      resolve(REPO_ROOT, "cursor", "bundle", "capture.js")],
     ["hermes capture",      resolve(REPO_ROOT, "hermes", "bundle", "capture.js")],
     ["codex stop",          resolve(REPO_ROOT, "codex", "bundle", "stop.js")],
+    ["openclaw index",      resolve(REPO_ROOT, "openclaw", "dist", "index.js")],
   ];
 
   it.each(CAPTURE_BUNDLES)("%s INSERT lists plugin_version column", (_label, path) => {
