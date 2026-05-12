@@ -10,25 +10,33 @@
  * cause of cross-author duplicates (e.g. two near-identical "standup"
  * skills mined a few days apart because the gate never saw the first).
  *
- * Interim policy on MERGE targets: project-local only. Editing a
- * globally-pulled skill (potentially authored by someone else) without
- * the contributors / scope-promotion plumbing tracked in issue #118 is
- * unsafe — it would silently overwrite a teammate's work or produce
- * ambiguous lineage in the skills table. Global skills are reference
- * only here; they shape the gate's KEEP/SKIP decision but are not valid
- * MERGE targets.
+ * Cross-author MERGE policy (issue #118): MERGE is now allowed on any
+ * skill in the block, including ones authored by other teammates. When
+ * the editor is not the original author, the worker's recordToDeeplake
+ * path auto-promotes `scope` from "me" to "team" and appends the editor
+ * to the `contributors` array on the v+1 row. The gate prompt declares
+ * this so the LLM understands the "promotion" cost is real and only
+ * picks cross-author MERGE when the new evidence genuinely extends the
+ * existing skill (rather than as a default).
  */
 
-import { listSkills, resolveSkillsRoot } from "./skill-writer.js";
+import { listSkills, resolveSkillsRoot, parseFrontmatter } from "./skill-writer.js";
 
 export interface TaggedSkill {
   name: string;
   body: string;
   source: "project" | "global";
+  /**
+   * Author parsed from the SKILL.md frontmatter. Undefined for legacy
+   * files that pre-date the `author` field — the worker treats those as
+   * "owned by whoever's about to edit" (same-author semantics) so a
+   * legacy local file isn't accidentally treated as cross-author.
+   */
+  author?: string;
 }
 
 export interface ExistingSkillsBlock {
-  /** Names eligible as MERGE targets — project-local only. */
+  /** Names eligible as MERGE targets. Empty when no skills exist. */
   mergeTargetNames: string[];
   /** Rendered block of all skills (project + global) for the gate prompt. */
   block: string;
@@ -36,15 +44,23 @@ export interface ExistingSkillsBlock {
 
 /**
  * Collect every existing skill the gate should know about, with its
- * source root tagged. If a name collides across roots, the project copy
- * wins (the user is presumed to be actively editing it locally).
+ * source root + author tagged. If a name collides across roots, the
+ * project copy wins (the user is presumed to be actively editing it
+ * locally).
  */
 export function listAllExistingSkills(cwd: string): TaggedSkill[] {
   const projectRoot = resolveSkillsRoot("project", cwd);
   const globalRoot = resolveSkillsRoot("global", cwd);
+  const tag = (source: "project" | "global") => (s: { name: string; body: string }): TaggedSkill => {
+    const parsed = parseFrontmatter(s.body);
+    const author = typeof parsed?.fm.author === "string" && parsed.fm.author.length > 0
+      ? parsed.fm.author
+      : undefined;
+    return { name: s.name, body: s.body, source, author };
+  };
   const tagged: TaggedSkill[] = [
-    ...listSkills(projectRoot).map(s => ({ ...s, source: "project" as const })),
-    ...listSkills(globalRoot).map(s => ({ ...s, source: "global" as const })),
+    ...listSkills(projectRoot).map(tag("project")),
+    ...listSkills(globalRoot).map(tag("global")),
   ];
   const seen = new Set<string>();
   const out: TaggedSkill[] = [];
@@ -68,12 +84,20 @@ export function renderExistingSkillsBlock(cwd: string, charCap: number): Existin
       block: "(no existing skills — MERGE is NOT a valid choice; pick KEEP or SKIP only)",
     };
   }
-  const mergeTargetNames = skills.filter(s => s.source === "project").map(s => s.name);
+  // Every skill is now a valid MERGE target — cross-author MERGE triggers
+  // an auto-promotion of `scope` to "team" plus an append to the
+  // `contributors` column, instead of being forbidden.
+  const mergeTargetNames = skills.map(s => s.name);
   let total = 0;
   const out: string[] = [];
   for (const s of skills) {
-    const tag = s.source === "project" ? "[project]" : "[global, read-only]";
-    const block = `--- existing skill ${tag}: ${s.name} ---\n${s.body}\n`;
+    // Tag captures both the install root (project vs global) and the
+    // author so the gate prompt can communicate "this one's yours / this
+    // one's a teammate's; MERGE is allowed either way but promotion
+    // applies when authors differ".
+    const sourceTag = s.source === "project" ? "project" : "global";
+    const authorTag = s.author ? `, author=${s.author}` : "";
+    const block = `--- existing skill [${sourceTag}${authorTag}]: ${s.name} ---\n${s.body}\n`;
     if (total + block.length > charCap) {
       out.push(`[…${skills.length - out.length} more existing skills omitted]`);
       break;

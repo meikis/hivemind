@@ -119,7 +119,7 @@ export function buildPullSql(args: {
   const whereClause = where.length > 0 ? ` WHERE ${where.join(" AND ")}` : "";
   return (
     `SELECT name, project, project_key, body, version, source_agent, scope, ` +
-    `author, description, trigger_text, source_sessions, install, ` +
+    `author, contributors, description, trigger_text, source_sessions, install, ` +
     `created_at, updated_at ` +
     `FROM "${args.tableName}"${whereClause} ` +
     `ORDER BY project_key ASC, name ASC, version DESC`
@@ -297,11 +297,28 @@ export function selectLatestPerName(rows: Record<string, unknown>[]): Record<str
  */
 export function renderSkillFile(row: Record<string, unknown>): string {
   const sources = parseSourceSessions(row.source_sessions);
+  // Author + contributors land on disk so the gate sees the same lineage
+  // info it would for a locally-mined skill. Without this, the worker on
+  // the puller's side can't tell that a `[global]` skill is authored by
+  // someone else, and the cross-author MERGE auto-promote (issue #118)
+  // silently degrades to "treat as same-author" — re-introducing the
+  // ambiguous-lineage bug we built #118 to fix.
+  const author = typeof row.author === "string" && row.author.length > 0
+    ? row.author
+    : undefined;
+  const contributors = parseContributors(row.contributors);
+  // Legacy rows have contributors=[]; render them as [author] on disk so
+  // local consumers (gate, mergeSkill) see a consistent view.
+  const renderedContributors = contributors.length > 0
+    ? contributors
+    : (author ? [author] : []);
   const fm: SkillFrontmatter = {
     name: String(row.name ?? ""),
     description: String(row.description ?? ""),
     trigger: typeof row.trigger_text === "string" && row.trigger_text.length > 0 ? String(row.trigger_text) : undefined,
+    author,
     source_sessions: sources,
+    contributors: renderedContributors,
     version: Number(row.version ?? 1),
     created_by_agent: String(row.source_agent ?? "unknown"),
     created_at: String(row.created_at ?? new Date().toISOString()),
@@ -322,13 +339,30 @@ function parseSourceSessions(v: unknown): string[] {
   return [];
 }
 
+/** Same shape as parseSourceSessions but for the `contributors` column. */
+function parseContributors(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map(String);
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      if (Array.isArray(parsed)) return parsed.map(String);
+    } catch { /* not JSON, fall through */ }
+  }
+  return [];
+}
+
 function renderFrontmatter(fm: SkillFrontmatter): string {
   const lines: string[] = ["---"];
   lines.push(`name: ${fm.name}`);
   lines.push(`description: ${JSON.stringify(fm.description)}`);
   if (fm.trigger) lines.push(`trigger: ${JSON.stringify(fm.trigger)}`);
+  if (fm.author) lines.push(`author: ${fm.author}`);
   lines.push(`source_sessions:`);
   for (const s of fm.source_sessions) lines.push(`  - ${s}`);
+  if (fm.contributors && fm.contributors.length > 0) {
+    lines.push(`contributors:`);
+    for (const c of fm.contributors) lines.push(`  - ${c}`);
+  }
   lines.push(`version: ${fm.version}`);
   lines.push(`created_by_agent: ${fm.created_by_agent}`);
   lines.push(`created_at: ${fm.created_at}`);

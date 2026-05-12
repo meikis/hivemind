@@ -651,18 +651,25 @@ function parseFrontmatter(text) {
   const head = text.slice(4, end).trim();
   const body = text.slice(end + 4).replace(/^\r?\n/, "");
   const fm = { source_sessions: [] };
-  let mode = "kv";
+  let arrayKey = null;
   for (const raw of head.split(/\r?\n/)) {
-    if (mode === "sources") {
+    if (arrayKey) {
       const m2 = raw.match(/^\s+-\s+(.+)$/);
       if (m2) {
-        fm.source_sessions.push(m2[1].trim());
+        const arr = fm[arrayKey] ?? [];
+        arr.push(m2[1].trim());
+        fm[arrayKey] = arr;
         continue;
       }
-      mode = "kv";
+      arrayKey = null;
     }
     if (raw.startsWith("source_sessions:")) {
-      mode = "sources";
+      arrayKey = "source_sessions";
+      continue;
+    }
+    if (raw.startsWith("contributors:")) {
+      arrayKey = "contributors";
+      fm.contributors = [];
       continue;
     }
     const m = raw.match(/^([a-zA-Z_]+):\s*(.*)$/);

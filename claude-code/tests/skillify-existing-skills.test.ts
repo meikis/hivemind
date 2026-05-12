@@ -72,6 +72,21 @@ describe("listAllExistingSkills", () => {
     expect(skills[0].source).toBe("project");
     expect(skills[0].body).toContain("local edits");
   });
+
+  it("surfaces the frontmatter `author` so the gate can detect cross-author MERGE", () => {
+    const fmWithAuthor = (name: string, author: string) =>
+      `---\nname: ${name}\ndescription: "d"\nauthor: ${author}\nsource_sessions: []\nversion: 1\ncreated_by_agent: x\ncreated_at: 2026\nupdated_at: 2026\n---\n\nbody\n`;
+    const aDir = join(projectRoot(), "mine");
+    mkdirSync(aDir, { recursive: true });
+    writeFileSync(join(aDir, "SKILL.md"), fmWithAuthor("mine", "emanuele"));
+    // Legacy file with no author in frontmatter — must stay undefined,
+    // not be auto-filled with a placeholder.
+    writeSkill(projectRoot(), "legacy", "body");
+    const skills = listAllExistingSkills(projectCwd);
+    const byName = Object.fromEntries(skills.map(s => [s.name, s]));
+    expect(byName["mine"].author).toBe("emanuele");
+    expect(byName["legacy"].author).toBeUndefined();
+  });
 });
 
 describe("renderExistingSkillsBlock", () => {
@@ -82,25 +97,41 @@ describe("renderExistingSkillsBlock", () => {
     expect(result.block).toMatch(/MERGE is NOT a valid choice/);
   });
 
-  it("only lists project-local skills as MERGE-eligible (global is read-only)", () => {
+  it("lists every existing skill as MERGE-eligible (issue #118: cross-author MERGE allowed)", () => {
     writeSkill(projectRoot(), "deploy", "p body");
     writeSkill(globalRoot(), "team-standup--d", "g body");
     writeSkill(globalRoot(), "pg-deeplake-cred-callback--levon", "g body 2");
     const result = renderExistingSkillsBlock(projectCwd, 10_000);
-    // The gate uses mergeTargetNames verbatim in the "MERGE only if your
-    // name is EXACTLY one of ..." rule. Cross-author skills must not
-    // appear here or the gate will silently overwrite teammates' work.
-    expect(result.mergeTargetNames).toEqual(["deploy"]);
+    // Before #118 the global ones were filtered out. Now they're all
+    // valid targets — the worker handles cross-author lineage by
+    // promoting scope=me -> scope=team on the v+1 row.
+    expect(result.mergeTargetNames.sort()).toEqual(
+      ["deploy", "pg-deeplake-cred-callback--levon", "team-standup--d"],
+    );
   });
 
-  it("tags each rendered skill with [project] or [global, read-only]", () => {
-    writeSkill(projectRoot(), "my-local", "local body");
-    writeSkill(globalRoot(), "their-skill--alice", "alice body");
+  it("tags each rendered skill with [project] or [global] and surfaces author when present", () => {
+    // Project skill carries its author in the frontmatter; global pulled
+    // skill from a teammate likewise.
+    const fmWithAuthor = (name: string, author: string, body: string) =>
+      `---\nname: ${name}\ndescription: "d"\nauthor: ${author}\nsource_sessions: []\nversion: 1\ncreated_by_agent: x\ncreated_at: 2026\nupdated_at: 2026\n---\n\n${body}\n`;
+    {
+      const dir = join(projectRoot(), "my-local");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "SKILL.md"), fmWithAuthor("my-local", "emanuele", "local body"));
+    }
+    {
+      const dir = join(globalRoot(), "their-skill--alice");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "SKILL.md"), fmWithAuthor("their-skill--alice", "alice", "alice body"));
+    }
     const result = renderExistingSkillsBlock(projectCwd, 10_000);
-    expect(result.block).toContain("[project]: my-local");
-    expect(result.block).toContain("[global, read-only]: their-skill--alice");
+    // Tag shape: [<root>[, author=<name>]]. The gate uses the author to
+    // judge whether MERGE is cross-author (auto-promote trigger).
+    expect(result.block).toContain("[project, author=emanuele]: my-local");
+    expect(result.block).toContain("[global, author=alice]: their-skill--alice");
     // Defensive against future template churn: no skill should ever
-    // render without one of the two tags.
+    // render without a bracketed source tag.
     expect(result.block).not.toMatch(/^--- existing skill: /m);
   });
 

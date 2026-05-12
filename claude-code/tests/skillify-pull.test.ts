@@ -295,6 +295,42 @@ describe("renderSkillFile", () => {
     });
     expect(text).not.toMatch(/^trigger:/m);
   });
+
+  // Issue #118 — author + contributors persistence
+  it("renders author and contributors when present on the row", () => {
+    const text = renderSkillFile({
+      name: "deploy", description: "d", source_sessions: [], version: 3,
+      source_agent: "claude_code", created_at: "t", updated_at: "t",
+      author: "alice", contributors: '["alice","emanuele"]',
+      body: "b",
+    });
+    expect(text).toContain("author: alice");
+    expect(text).toContain("contributors:\n  - alice\n  - emanuele\n");
+  });
+
+  it("falls back to [author] when contributors is empty (legacy row)", () => {
+    // Legacy rows predating #118 have contributors='[]'. We render
+    // contributors=[author] on disk so local consumers see a consistent
+    // view from the moment the skill lands.
+    const text = renderSkillFile({
+      name: "x", description: "", source_sessions: [], version: 1,
+      source_agent: "x", created_at: "t", updated_at: "t",
+      author: "alice", contributors: "[]",
+      body: "b",
+    });
+    expect(text).toContain("author: alice");
+    expect(text).toContain("contributors:\n  - alice\n");
+  });
+
+  it("omits both fields when author is missing (very old rows)", () => {
+    const text = renderSkillFile({
+      name: "x", description: "", source_sessions: [], version: 1,
+      source_agent: "x", created_at: "t", updated_at: "t",
+      body: "b",
+    });
+    expect(text).not.toMatch(/^author:/m);
+    expect(text).not.toMatch(/^contributors:/m);
+  });
 });
 
 // ── readLocalVersion ────────────────────────────────────────────────────────

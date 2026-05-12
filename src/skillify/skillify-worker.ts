@@ -240,7 +240,7 @@ function buildPrompt(pairs: Pair[]): string {
   const existing = renderExistingSkillsBlock(cfg.cwd, EXISTING_SKILLS_CHAR_CAP);
   const mergeTargetsClause = existing.mergeTargetNames.length > 0
     ? `MERGE is allowed only if your "name" is EXACTLY one of: [${existing.mergeTargetNames.join(", ")}]. Any other name MUST use KEEP, not MERGE.`
-    : `MERGE is FORBIDDEN — there are no project skills to merge into. Use KEEP or SKIP only.`;
+    : `MERGE is FORBIDDEN — there are no existing skills to merge into. Use KEEP or SKIP only.`;
   return [
     `You are a skill curator for the "${cfg.project}" project. You decide whether the recent`,
     `agent activity below contains a recurring, non-trivial pattern worth crystallizing as a`,
@@ -250,18 +250,19 @@ function buildPrompt(pairs: Pair[]): string {
     `- KEEP only if the pattern recurs across at least 3 of the exchanges, is non-obvious to a`,
     `  competent engineer, and is not already covered by an existing skill below.`,
     `- SKIP if the activity is one-off, generic engineering work, or already covered.`,
-    `- MERGE if the pattern is a meaningful extension of an existing PROJECT skill — produce a`,
+    `- MERGE if the pattern is a meaningful extension of an existing skill — produce a`,
     `  merged body that incorporates the new evidence without exceeding ~3000 characters or`,
     `  covering unrelated domains.`,
     `- ${mergeTargetsClause}`,
-    `- Skills tagged [global, read-only] are autopulled from the team's shared skills`,
-    `  table. They exist so you can recognise patterns already covered globally and pick`,
-    `  SKIP (or a more specific KEEP) instead of duplicating them. They are NOT valid`,
-    `  MERGE targets — only [project] skills can be merged into.`,
+    `- Cross-author MERGE has a real cost: editing a skill authored by someone else is`,
+    `  recorded as a team-level edit (scope=team, contributors+="${cfg.userName}"). Use it only`,
+    `  when the new evidence genuinely extends the existing skill; otherwise pick KEEP or SKIP.`,
+    `  Tags like [project, author=alice] / [global, author=bob] tell you whose skill it is.`,
     `- Skill bodies should follow the existing style: short sections (When to use, Workflow,`,
     `  Anti-patterns), concrete commands and file paths drawn from the exchanges, no marketing.`,
     ``,
-    `=== EXISTING SKILLS ([project] are MERGE-eligible, [global] are reference only) ===`,
+    `=== EXISTING SKILLS (all MERGE-eligible; [global, author=X] entries from teammate X mean`,
+    `cross-author MERGE auto-promotes scope to team) ===`,
     existing.block,
     ``,
     `=== RECENT EXCHANGES (prompt + answer pairs, tool calls already stripped) ===`,
@@ -416,11 +417,43 @@ async function main(): Promise<void> {
      * `skills` table for org-wide provenance. Failures here do not abort
      * the local write — the local file is the source of truth, the table
      * is a side-channel index. We log and move on.
+     *
+     * Issue #118 — auto-promotion of scope:
+     *   - KEEP, or MERGE by the original author -> scope unchanged
+     *     (`cfg.scope`, normally "me"), `author = cfg.userName`,
+     *     `contributors` reflects the (single) author list from the
+     *     local SKILL.md write.
+     *   - MERGE where the existing skill's author != cfg.userName -> the
+     *     `scope` of the new row is bumped to "team" so future readers
+     *     can see the skill is co-owned. `author` keeps the v=1 author
+     *     (immutable lineage), `contributors` gets the editor appended
+     *     by mergeSkill itself.
      */
     async function recordToDeeplake(
-      result: { path: string; version: number; createdAt: string; updatedAt: string },
+      result: {
+        path: string;
+        version: number;
+        createdAt: string;
+        updatedAt: string;
+        author?: string;
+        contributors: string[];
+      },
       verdict: Verdict,
     ): Promise<void> {
+      // Author stamped on the DB row is the *original* author when one is
+      // known (preserves lineage across merges); falls back to the current
+      // user for a fresh KEEP or a legacy local file with no frontmatter author.
+      const author = result.author ?? cfg.userName;
+      // Auto-promote: any MERGE where the editor isn't the original author
+      // makes the skill team-scoped going forward. KEEP and same-author
+      // MERGE leave scope at the worker's configured value.
+      const isCrossAuthorMerge =
+        verdict.verdict === "MERGE" && result.author !== undefined && result.author !== cfg.userName;
+      const scope: "me" | "team" | "org" = isCrossAuthorMerge ? "team" : cfg.scope;
+      // Contributors come from the skill-writer (it merges previous list
+      // with the editor). For a legacy KEEP without author, the list is
+      // empty; downstream readers fall back to [author] in that case.
+      const contributors = result.contributors;
       try {
         await insertSkillRow({
           query,
@@ -432,8 +465,9 @@ async function main(): Promise<void> {
           install: cfg.install,
           sourceSessions,
           sourceAgent: cfg.agent,
-          scope: cfg.scope,
-          author: cfg.userName,
+          scope,
+          author,
+          contributors,
           description: verdict.description ?? "",
           trigger: verdict.trigger,
           body: verdict.body!,
@@ -441,7 +475,11 @@ async function main(): Promise<void> {
           createdAt: result.createdAt,
           updatedAt: result.updatedAt,
         });
-        wlog(`recorded to skills table: name=${verdict.name} v${result.version}`);
+        wlog(
+          `recorded to skills table: name=${verdict.name} v${result.version} ` +
+          `author=${author} scope=${scope} contributors=${contributors.length}` +
+          (isCrossAuthorMerge ? " [auto-promoted me->team]" : ""),
+        );
       } catch (e: any) {
         wlog(`skills table insert failed (non-fatal): ${e.message}`);
       }
@@ -457,6 +495,7 @@ async function main(): Promise<void> {
           body: verdict.body,
           sourceSessions,
           agent: cfg.agent,
+          author: cfg.userName,
         });
         wlog(`wrote new skill: ${result.path}`);
         recordSkill(cfg.projectKey, verdict.name, watermarkUuid, watermarkDate);
@@ -474,6 +513,7 @@ async function main(): Promise<void> {
           body: verdict.body,
           newSourceSessions: sourceSessions,
           agent: cfg.agent,
+          editor: cfg.userName,
         });
         wlog(`merged into skill: ${result.path} (v${result.version})`);
         recordSkill(cfg.projectKey, verdict.name, watermarkUuid, watermarkDate);
@@ -493,6 +533,7 @@ async function main(): Promise<void> {
               body: verdict.body,
               sourceSessions,
               agent: cfg.agent,
+              author: cfg.userName,
             });
             wlog(`wrote new skill (merge fallback): ${result.path}`);
             recordSkill(cfg.projectKey, verdict.name, watermarkUuid, watermarkDate);
