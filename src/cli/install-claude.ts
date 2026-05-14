@@ -161,12 +161,16 @@ export function cleanupBrokenSettingsHooks(): { removed: number; events: string[
   const settingsPath = settingsJsonPath();
   if (!existsSync(settingsPath)) return { removed: 0, events: [] };
 
-  let settings: SettingsShape;
+  let parsed: unknown;
   try {
-    settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as SettingsShape;
+    parsed = JSON.parse(readFileSync(settingsPath, "utf-8"));
   } catch {
     return { removed: 0, events: [] };
   }
+  // `JSON.parse` succeeds (returns null) for literal "null" — dereferencing
+  // `.hooks` would throw. Caught by CodeRabbit on PR #166.
+  if (!parsed || typeof parsed !== "object") return { removed: 0, events: [] };
+  const settings = parsed as SettingsShape;
   if (!settings.hooks || typeof settings.hooks !== "object") return { removed: 0, events: [] };
 
   let removed = 0;

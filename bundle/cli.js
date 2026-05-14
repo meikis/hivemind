@@ -201,12 +201,15 @@ function cleanupBrokenSettingsHooks() {
   const settingsPath = settingsJsonPath();
   if (!existsSync2(settingsPath))
     return { removed: 0, events: [] };
-  let settings;
+  let parsed;
   try {
-    settings = JSON.parse(readFileSync2(settingsPath, "utf-8"));
+    parsed = JSON.parse(readFileSync2(settingsPath, "utf-8"));
   } catch {
     return { removed: 0, events: [] };
   }
+  if (!parsed || typeof parsed !== "object")
+    return { removed: 0, events: [] };
+  const settings = parsed;
   if (!settings.hooks || typeof settings.hooks !== "object")
     return { removed: 0, events: [] };
   let removed = 0;

@@ -354,6 +354,28 @@ describe("cleanupBrokenSettingsHooks", () => {
     expect(fs.readFileSync(path.join(TEMP_HOME, ".claude", "settings.json"), "utf-8")).toBe("{not-json");
   });
 
+  it("returns {removed:0} when settings.json is literally 'null' (CodeRabbit PR#166)", async () => {
+    // JSON.parse("null") returns null without throwing — dereferencing
+    // `.hooks` would crash. Regression guard for the post-parse null check.
+    fs.mkdirSync(path.join(TEMP_HOME, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(TEMP_HOME, ".claude", "settings.json"), "null", "utf-8");
+    const { cleanupBrokenSettingsHooks } = await importFresh();
+    expect(() => cleanupBrokenSettingsHooks()).not.toThrow();
+    expect(cleanupBrokenSettingsHooks()).toEqual({ removed: 0, events: [] });
+  });
+
+  it("returns {removed:0} when settings.json is a JSON primitive (string/number/bool)", async () => {
+    // Other JSON.parse non-object outputs: "5", "\"x\"", "true". All valid
+    // JSON, none usable as a SettingsShape.
+    fs.mkdirSync(path.join(TEMP_HOME, ".claude"), { recursive: true });
+    for (const literal of ["5", "\"some-string\"", "true", "[]"]) {
+      fs.writeFileSync(path.join(TEMP_HOME, ".claude", "settings.json"), literal, "utf-8");
+      const { cleanupBrokenSettingsHooks } = await importFresh();
+      expect(() => cleanupBrokenSettingsHooks(), `failed for literal ${literal}`).not.toThrow();
+      expect(cleanupBrokenSettingsHooks()).toEqual({ removed: 0, events: [] });
+    }
+  });
+
   it("removes a hook entry whose legacy path points at a non-existent file", async () => {
     // Path is in the legacy fragment AND the file doesn't exist → remove.
     writeSettings({
