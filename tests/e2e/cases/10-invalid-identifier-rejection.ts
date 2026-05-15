@@ -30,7 +30,7 @@ import type { E2ECase } from "../types.js";
 const BAD_TABLE_NAME = "bad-name-with-dashes";
 const SENTINEL = "HIVEMIND_E2E_BAD_IDENT_SENTINEL_77";
 
-export const invalidIdentifierRejectionCase: E2ECase = {
+const invalidIdentifierRejectionCase: E2ECase = {
   id: "10-invalid-identifier-rejection",
   description:
     "HIVEMIND_SESSIONS_TABLE=<bad-name> → no SQL fires, no row lands, no table created",
@@ -109,3 +109,5 @@ export const invalidIdentifierRejectionCase: E2ECase = {
     },
   ],
 };
+
+export default invalidIdentifierRejectionCase;

@@ -12,7 +12,7 @@
 
 import type { E2ECase } from "../types.js";
 
-export const captureSmokeCase: E2ECase = {
+const captureSmokeCase: E2ECase = {
   id: "01-capture-smoke",
   description:
     "one agent turn → at least one row in the sessions table tagged with this run's session_id",
@@ -43,3 +43,5 @@ export const captureSmokeCase: E2ECase = {
     },
   ],
 };
+
+export default captureSmokeCase;

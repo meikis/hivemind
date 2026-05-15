@@ -53,7 +53,7 @@ interface HookEntry { command?: string; type?: string; timeout?: number }
 interface HookMatcher { matcher?: string; hooks?: HookEntry[] }
 interface SettingsShape { hooks?: Record<string, HookMatcher[]>; [k: string]: unknown }
 
-export const installNoBrokenPathsCase: E2ECase = {
+const installNoBrokenPathsCase: E2ECase = {
   id: "09-install-no-broken-paths",
   description:
     "after `hivemind <agent> install`, every hook command in the resulting config points at a file that exists on disk",
@@ -248,3 +248,5 @@ function resolvePath(p: string, home: string): string {
   if (isAbsolute(p)) return p;
   return join(home, p);
 }
+
+export default installNoBrokenPathsCase;

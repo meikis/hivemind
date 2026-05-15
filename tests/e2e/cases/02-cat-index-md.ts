@@ -17,7 +17,7 @@
 
 import type { E2ECase } from "../types.js";
 
-export const catIndexMdCase: E2ECase = {
+const catIndexMdCase: E2ECase = {
   id: "02-cat-index-md",
   description:
     "agent shells `cat ~/.deeplake/memory/index.md` and the virtual mount returns the index table",
@@ -41,3 +41,5 @@ export const catIndexMdCase: E2ECase = {
   // lives in cases/08-openclaw-tools.ts.
   skipFor: ["openclaw"],
 };
+
+export default catIndexMdCase;

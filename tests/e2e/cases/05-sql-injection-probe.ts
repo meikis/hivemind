@@ -17,7 +17,7 @@ import type { E2ECase } from "../types.js";
 
 const INJECTION = "'; DROP TABLE memory; --";
 
-export const sqlInjectionProbeCase: E2ECase = {
+const sqlInjectionProbeCase: E2ECase = {
   id: "05-sql-injection-probe",
   description:
     "prompt containing a SQL injection payload doesn't corrupt the memory table",
@@ -57,3 +57,5 @@ export const sqlInjectionProbeCase: E2ECase = {
     },
   ],
 };
+
+export default sqlInjectionProbeCase;

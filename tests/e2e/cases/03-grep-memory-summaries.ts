@@ -17,7 +17,7 @@ import type { E2ECase } from "../types.js";
 
 const SENTINEL = "HIVEMIND_E2E_GREP_SENTINEL_42";
 
-export const grepMemorySummariesCase: E2ECase = {
+const grepMemorySummariesCase: E2ECase = {
   id: "03-grep-memory-summaries",
   description:
     "agent shells grep over ~/.deeplake/memory/summaries/ and the SQL fast-path returns the sentinel row",
@@ -66,3 +66,5 @@ export const grepMemorySummariesCase: E2ECase = {
   // cases/08-openclaw-tools.ts (which invokes that tool directly).
   skipFor: ["openclaw"],
 };
+
+export default grepMemorySummariesCase;

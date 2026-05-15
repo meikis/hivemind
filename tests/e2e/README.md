@@ -115,11 +115,16 @@ Trigger `.github/workflows/e2e.yml` manually from the GitHub Actions tab, option
 
 ## How a case works
 
-Each file in `cases/` exports one `E2ECase` object:
+**Cases are auto-discovered.** Drop a new file in `tests/e2e/cases/` and the next `npm run e2e` runs it against every applicable agent — no `matrix.ts` edit, no registration step.
+
+Each case file exports one `E2ECase` object as its **default export**:
 
 ```ts
-export const myCase: E2ECase = {
-  id: "05-my-behavior",
+// tests/e2e/cases/13-my-behavior.ts
+import type { E2ECase } from "../types.js";
+
+const myCase: E2ECase = {
+  id: "13-my-behavior",
   description: "what this case asserts about the plugin",
   prompt: "instruct the agent to do something that exercises the hook",
   // optional: seed test data the agent will retrieve
@@ -135,20 +140,28 @@ export const myCase: E2ECase = {
       sql: ({ ctx, run }) => `SELECT count(*) AS n FROM "${ctx.creds.sessionsTable}" WHERE path ILIKE '%${run.sessionId}%'`,
       expect: (rows) => { if (Number(rows[0].n) < 1) throw new Error("no rows"); },
     },
+    // Escape hatch for assertions that don't fit the four typed shapes
+    // (filesystem checks, per-agent config walks, etc.):
+    { type: "custom", label: "X", check: async ({ ctx, run }) => null /* or failure string */ },
   ],
   // optional: this case doesn't apply to these agents (rationale required)
-  skipFor: ["pi"], // pi doesn't ship the X bundle; tracked in #NNN
+  skipFor: ["pi"], // pi doesn't ship the X bundle; rationale here
+  // optional: install-shape case — runner skips driver.run() and goes
+  // straight from setup() to assertions. No model API call.
+  installOnly: false,
 };
+
+export default myCase;
 ```
 
-Then register it in `matrix.ts`:
+**Discovery rules:**
 
-```ts
-import { myCase } from "./cases/05-my-behavior.js";
-export const ALL_CASES: E2ECase[] = [..., myCase];
-```
+- File lives directly under `tests/e2e/cases/` (no nesting).
+- File name ends in `.ts` and starts with a digit (`13-foo.ts`) so it sorts deterministically.
+- File MUST `export default` the case object.
+- The default export MUST satisfy the `E2ECase` shape (id, prompt, assertions[]).
 
-That's the entire change. The harness handles sandboxing, install, spawn, cleanup, and reporting for all five agents.
+Files that don't satisfy the rules are silently skipped with a one-line stderr warning — a half-written case in the directory won't break the matrix.
 
 ## How a driver works
 

@@ -16,7 +16,7 @@
 
 import type { E2ECase } from "../types.js";
 
-export const sessionStartInjectCase: E2ECase = {
+const sessionStartInjectCase: E2ECase = {
   id: "04-session-start-inject",
   description:
     "agent's session-start inject is reflected back when asked about the memory layout",
@@ -45,3 +45,5 @@ export const sessionStartInjectCase: E2ECase = {
   // by cases/08-openclaw-tools.ts's before_prompt_build assertion.
   skipFor: ["openclaw"],
 };
+
+export default sessionStartInjectCase;

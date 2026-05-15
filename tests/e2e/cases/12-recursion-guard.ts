@@ -22,7 +22,7 @@
 
 import type { E2ECase } from "../types.js";
 
-export const recursionGuardCase: E2ECase = {
+const recursionGuardCase: E2ECase = {
   id: "12-recursion-guard",
   description:
     "HIVEMIND_WIKI_WORKER=1 in env → session-end wiki worker short-circuits and no summary row lands",
@@ -72,3 +72,5 @@ export const recursionGuardCase: E2ECase = {
   // a dedicated openclaw recursion test would need a different shape.
   skipFor: ["openclaw"],
 };
+
+export default recursionGuardCase;

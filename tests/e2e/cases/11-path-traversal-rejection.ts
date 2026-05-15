@@ -21,7 +21,7 @@ import type { E2ECase } from "../types.js";
 
 const TRAVERSAL_TARGET = "~/.deeplake/memory/../../../../etc/passwd";
 
-export const pathTraversalRejectionCase: E2ECase = {
+const pathTraversalRejectionCase: E2ECase = {
   id: "11-path-traversal-rejection",
   description:
     "traversal segments (../) in a memory-mount path don't escape the virtual filesystem",
@@ -52,3 +52,5 @@ export const pathTraversalRejectionCase: E2ECase = {
   // path; adding traversal there would be a separate dedicated case.
   skipFor: ["openclaw"],
 };
+
+export default pathTraversalRejectionCase;

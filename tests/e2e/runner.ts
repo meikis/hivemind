@@ -37,7 +37,7 @@ import type {
   RunResult,
   TestCredentials,
 } from "./types.js";
-import { ALL_CASES, ALL_DRIVERS, buildMatrix, type MatrixPoint } from "./matrix.js";
+import { ALL_DRIVERS, buildMatrix, loadAllCases, type MatrixPoint } from "./matrix.js";
 import { createSandbox, buildSessionId } from "./sandbox.js";
 import { cleanupSessionRows, makeAssertionRunner } from "./assertions.js";
 import { writeSummary, formatCents, type RunSummary } from "./cost.js";
@@ -253,7 +253,10 @@ async function main(): Promise<void> {
   const repoRoot = resolve(here, "..", "..");
   if (!args.list) ensureBundleBuilt(repoRoot);
 
-  // Filter cases / agents per CLI flags.
+  // Filter cases / agents per CLI flags. ALL_CASES is auto-discovered
+  // from tests/e2e/cases/*.ts — adding a case is one new file, no
+  // matrix.ts edit. See loadAllCases() for discovery rules.
+  const ALL_CASES = await loadAllCases();
   const cases = args.case
     ? ALL_CASES.filter((c) => c.id === args.case)
     : ALL_CASES;

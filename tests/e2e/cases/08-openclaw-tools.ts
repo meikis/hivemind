@@ -26,7 +26,7 @@ import { buildOpenclawToolPrompt } from "../agents/openclaw.js";
 
 const OC_SENTINEL = "HIVEMIND_E2E_OPENCLAW_TOOL_SENTINEL_99";
 
-export const openclawToolsCase: E2ECase = {
+const openclawToolsCase: E2ECase = {
   id: "08-openclaw-tools",
   description:
     "openclaw's hivemind_search and hivemind_read tools both work and the SKILL body would be injectable",
@@ -72,3 +72,5 @@ export const openclawToolsCase: E2ECase = {
   //   - SKILL inject → session-start inject (case 04)
   skipFor: ["claude-code", "codex", "cursor-agent", "hermes", "pi"],
 };
+
+export default openclawToolsCase;

@@ -25,7 +25,7 @@
 import { DeeplakeApi } from "../../../src/deeplake-api.js";
 import type { E2ECase } from "../types.js";
 
-export const missingTableSelfHealCase: E2ECase = {
+const missingTableSelfHealCase: E2ECase = {
   id: "06-missing-table-self-heal",
   description:
     "after the sessions table is dropped, the next capture lazily creates it and lands the row",
@@ -78,3 +78,5 @@ export const missingTableSelfHealCase: E2ECase = {
     },
   ],
 };
+
+export default missingTableSelfHealCase;

@@ -22,7 +22,7 @@ import type { E2ECase } from "../types.js";
 // the agent can still echo single-quoted content in the prompt itself.
 const UNICODE_MARKER = "🐝-مرحبا-\"X\\Y\"-€-snapshot";
 
-export const unicodeRoundtripCase: E2ECase = {
+const unicodeRoundtripCase: E2ECase = {
   id: "07-unicode-roundtrip",
   description:
     "captured message preserves emoji + RTL + smart quotes + backslashes byte-for-byte through the JSONB roundtrip",
@@ -53,3 +53,5 @@ export const unicodeRoundtripCase: E2ECase = {
     },
   ],
 };
+
+export default unicodeRoundtripCase;
