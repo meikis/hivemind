@@ -67,7 +67,7 @@ import { homedir, tmpdir } from "node:os";
 import {
   existsSync as fsExists, mkdirSync as fsMkdir, openSync as fsOpen,
   closeSync as fsClose, writeFileSync as fsWriteFile, constants as fsConstants,
-  readFileSync as fsReadFile, renameSync as fsRename,
+  readFileSync as fsReadFile, renameSync as fsRename, unlinkSync as fsUnlink,
 } from "node:fs";
 import { createHash } from "node:crypto";
 // node:child_process is stubbed in the main openclaw bundle (see esbuild.config.mjs
@@ -374,6 +374,15 @@ let captureEnabled = true;
 const capturedCounts = new Map<string, number>();
 const fallbackSessionId = crypto.randomUUID();
 
+// Per-runtime dedup of skillify worker spawns. Without this, every
+// agent_end after the previous worker exits re-acquires the on-disk
+// lock and spawns a fresh worker, which does one watermark-check SQL
+// round-trip and exits — wasted Node cold-start + DB I/O across a long
+// session. Single-spawn-per-session-per-runtime matches what the
+// non-openclaw agents already do via `tryAcquireWorkerLock` semantics
+// in src/skillify/state.ts. See #100.
+const skillifySpawnedFor = new Set<string>();
+
 // --- Skillify worker spawn (mirror of src/skillify/spawn-skillify-worker.ts) ---
 //
 // OpenClaw can't import the shared skillify TS modules — its bundle is
@@ -425,14 +434,51 @@ function deriveOpenclawProjectKey(channel: string): { key: string; project: stri
   return { key, project };
 }
 
+// Per-project filesystem lock guarding the skillify worker spawn.
+// Mirrors `tryAcquireWorkerLock` in src/skillify/state.ts: writes a ms
+// timestamp into the lock file when acquired, treats locks older than
+// LOCK_MAX_AGE_MS as stale (abnormal worker death, kernel kill, OOM —
+// the worker's `finally`-release didn't run), unlinks and re-acquires.
+// Without this, a single crashed worker halts mining for that
+// project_key permanently until manual cleanup. See #110.
+//
+// Empty pre-existing locks (from earlier code that wrote no payload)
+// parse as NaN and are treated as immediately stale — clean migration
+// on first patched run.
+const LOCK_MAX_AGE_MS = 10 * 60 * 1000; // 10 min, generous vs typical
+                                        // worker run (<30s + buffer)
+
 function tryAcquireOpenclawSkillifyLock(projectKey: string): boolean {
   try {
     migrateOpenclawSkillifyLegacyStateDir();
     fsMkdir(OPENCLAW_SKILLIFY_STATE_DIR, { recursive: true });
     const lockPath = joinPath(OPENCLAW_SKILLIFY_STATE_DIR, `${projectKey}.worker.lock`);
-    const fd = fsOpen(lockPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY);
-    fsClose(fd);
-    return true;
+    const acquire = (): boolean => {
+      const fd = fsOpen(lockPath, fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY);
+      try {
+        fsWriteFile(fd, String(Date.now()));
+      } finally {
+        fsClose(fd);
+      }
+      return true;
+    };
+    try {
+      return acquire();
+    } catch {
+      // O_EXCL failed → lock file already exists. Check staleness.
+      try {
+        const body = fsReadFile(lockPath, "utf-8");
+        const ts = Number.parseInt(body.trim(), 10);
+        const age = Date.now() - (Number.isFinite(ts) ? ts : 0);
+        if (!Number.isFinite(ts) || age > LOCK_MAX_AGE_MS) {
+          try { fsUnlink(lockPath); } catch { /* race; recheck below */ }
+          try { return acquire(); } catch { return false; }
+        }
+        return false; // fresh lock held by a live worker — skip spawn
+      } catch {
+        return false; // couldn't stat/read; safer to skip than double-spawn
+      }
+    }
   } catch { return false; }
 }
 
@@ -1258,23 +1304,35 @@ export default definePluginEntry({
           // never blocks the agent. Worker reads from the sessions table we
           // just wrote to. Non-fatal: a spawn failure here only loses one
           // mining attempt, never breaks capture.
-          try {
-            spawnOpenclawSkillifyWorker({
-              apiUrl: cfg.apiUrl,
-              token: cfg.token,
-              orgId: cfg.orgId,
-              workspaceId: cfg.workspaceId,
-              userName: cfg.userName,
-              channel: ev.channel || "openclaw",
-              sessionId: sid,
-              loggerWarn: (msg) => logger.error(`Skillify spawn: ${msg}`),
-              // Pass the same tuning dispatch the plugin populated at
-              // register-time. The worker will repopulate its own
-              // globalThis from this.
-              tuning: (globalThis as Record<string, unknown>).__hivemind_tuning__ as Record<string, string | undefined> | undefined,
-            });
-          } catch (e: any) {
-            logger.error(`Skillify spawn threw: ${e?.message ?? e}`);
+          //
+          // Per-runtime dedup (see #100): on long sessions, agent_end fires
+          // many times, and the previous worker has typically finished by
+          // the second or third turn — releasing the on-disk lock. Without
+          // this guard, every subsequent agent_end re-acquires the lock and
+          // spawns a fresh worker that does one watermark-check SQL roundtrip
+          // and exits. The on-disk lock is still authoritative across
+          // processes (e.g. multiple gateway restarts); this Set only
+          // suppresses redundant spawns within the same runtime.
+          if (!skillifySpawnedFor.has(sid)) {
+            skillifySpawnedFor.add(sid);
+            try {
+              spawnOpenclawSkillifyWorker({
+                apiUrl: cfg.apiUrl,
+                token: cfg.token,
+                orgId: cfg.orgId,
+                workspaceId: cfg.workspaceId,
+                userName: cfg.userName,
+                channel: ev.channel || "openclaw",
+                sessionId: sid,
+                loggerWarn: (msg) => logger.error(`Skillify spawn: ${msg}`),
+                // Pass the same tuning dispatch the plugin populated at
+                // register-time. The worker will repopulate its own
+                // globalThis from this.
+                tuning: (globalThis as Record<string, unknown>).__hivemind_tuning__ as Record<string, string | undefined> | undefined,
+              });
+            } catch (e: any) {
+              logger.error(`Skillify spawn threw: ${e?.message ?? e}`);
+            }
           }
         } catch (err) {
           logger.error(`Auto-capture failed: ${err instanceof Error ? err.message : String(err)}`);

@@ -283,8 +283,10 @@ describe("OpenClaw skillify worker (mining) wiring", () => {
     expect(src).toMatch(/OPENCLAW_SKILLIFY_WORKER_PATH\s*=\s*joinPath\(__openclaw_dirname,\s*"skillify-worker\.js"\)/);
     // HIVEMIND_SKILLIFY_WORKER=1 recursion guard set on spawn env
     expect(src).toMatch(/HIVEMIND_SKILLIFY_WORKER:\s*"1"/);
-    // agent_end hook calls it after the capture loop
-    expect(src).toMatch(/agent_end[\s\S]{0,3500}Auto-captured[\s\S]{0,500}spawnOpenclawSkillifyWorker/);
+    // agent_end hook calls it after the capture loop. Distance bumped
+    // from 500→1500 to accommodate the per-runtime spawn-dedup comment
+    // block landed for #100 between `Auto-captured` and the spawn site.
+    expect(src).toMatch(/agent_end[\s\S]{0,3500}Auto-captured[\s\S]{0,1500}spawnOpenclawSkillifyWorker/);
     // install: "global" — no per-project cwd, skills land under ~/.claude/skills/
     expect(src).toMatch(/install:\s*"global"/);
   });
