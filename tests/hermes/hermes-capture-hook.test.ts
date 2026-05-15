@@ -265,14 +265,20 @@ describe("hermes capture hook — message_embedding column", () => {
     expect(sql).toContain("'::jsonb, NULL,");
   });
 
-  it("HIVEMIND_EMBEDDINGS=false short-circuits to NULL without invoking EmbedClient", async () => {
+  it("user-disabled embeddings short-circuit to NULL without invoking EmbedClient", async () => {
     stdinMock.mockResolvedValue({
       hook_event_name: "pre_llm_call",
       session_id: "sid-emb-3",
       cwd: "/work/proj",
       extra: { prompt: "disabled" },
     });
-    await runHook({ HIVEMIND_EMBEDDINGS: "false" });
+    const { writeFileSync, mkdtempSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "hermes-cap-disabled-"));
+    const cfgPath = join(dir, "config.json");
+    writeFileSync(cfgPath, JSON.stringify({ embeddings: { enabled: false } }), "utf-8");
+    await runHook({ HIVEMIND_CONFIG_PATH: cfgPath });
     const sql = queryMock.mock.calls[0][0] as string;
     expect(sql).toContain("'::jsonb, NULL,");
     expect(sql).toMatch(/, message_embedding,/);

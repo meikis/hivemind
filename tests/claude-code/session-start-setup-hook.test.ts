@@ -48,12 +48,12 @@ vi.mock("../../src/embeddings/client.js", () => ({
 // (it's installed once into ~/.hivemind/embed-deps via `hivemind embeddings
 // install`). Without this mock the warmup branch is never reached and every
 // assertion below would land on the "skipped: no-transformers" log line. We
-// still respect HIVEMIND_EMBEDDINGS=false so the master-flag branch test below
-// behaves like production.
+// still honor the EMBEDDINGS_DISABLED_FOR_TEST env so the master-flag branch
+// test below behaves like the production user-disabled path.
 vi.mock("../../src/embeddings/disable.js", () => ({
-  embeddingsDisabled: () => process.env.HIVEMIND_EMBEDDINGS === "false",
+  embeddingsDisabled: () => process.env.EMBEDDINGS_DISABLED_FOR_TEST === "1",
   embeddingsStatus: () =>
-    process.env.HIVEMIND_EMBEDDINGS === "false" ? "disabled-by-env" : "enabled",
+    process.env.EMBEDDINGS_DISABLED_FOR_TEST === "1" ? "user-disabled" : "enabled",
 }));
 
 // We also need to control global.fetch for the GitHub version lookup.
@@ -227,11 +227,11 @@ describe("session-start-setup hook — embed daemon warmup", () => {
     );
   });
 
-  it("skips warmup when the master HIVEMIND_EMBEDDINGS=false flag is set", async () => {
-    await runHook({ HIVEMIND_EMBEDDINGS: "false" });
+  it("skips warmup when the user has disabled embeddings in config", async () => {
+    await runHook({ EMBEDDINGS_DISABLED_FOR_TEST: "1" });
     expect(embedWarmupMock).not.toHaveBeenCalled();
     expect(debugLogMock).toHaveBeenCalledWith(
-      "embed daemon warmup skipped: HIVEMIND_EMBEDDINGS=false",
+      "embed daemon warmup skipped: embeddings disabled in ~/.deeplake/config.json (run `hivemind embeddings enable` to opt in)",
     );
   });
 });
