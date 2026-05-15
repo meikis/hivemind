@@ -124,7 +124,19 @@ async function runPoint(
   const c: E2ECase = point.case;
   const a: AgentDriver = point.agent;
   if (point.skipped) {
-    return { case: c.id, agent: a.id, passed: true, failure: null, costCents: null, durationMs: 0, sessionId: "" };
+    // Match the provider-key-missing skip's marker shape so the output
+    // formatter and summary counter both treat skipFor as a skip, not a
+    // pass. Without this marker the point displays as `ok (0ms, $?)` and
+    // gets miscounted in the totals.
+    return {
+      case: c.id,
+      agent: a.id,
+      passed: true,
+      failure: `[skip] declared skipFor: ${a.id}`,
+      costCents: null,
+      durationMs: 0,
+      sessionId: "",
+    };
   }
   const ready = isReady(a, providerEnv);
   if (!ready.ready) {
