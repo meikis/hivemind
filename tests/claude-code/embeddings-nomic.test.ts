@@ -1,9 +1,17 @@
-import { describe, it, expect, vi } from "vitest";
-import { NomicEmbedder } from "../../src/embeddings/nomic.js";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  NomicEmbedder,
+  defaultImportTransformers,
+  _setTransformersImporterForTesting,
+  _resetTransformersImporterForTesting,
+} from "../../src/embeddings/nomic.js";
 
 // Mock the heavy transformers import so these tests don't pull in
-// onnxruntime-node or download any model weights. `load()` uses
-// `await import("@huggingface/transformers")` — vi.mock intercepts.
+// onnxruntime-node or download any model weights. `load()` resolves
+// transformers via an injected importer (default goes through the canonical
+// shared-deps walk + bare fallback); we inject one that returns this mock so
+// the test env on developer machines doesn't accidentally load the real
+// installed copy at ~/.hivemind/embed-deps/.
 vi.mock("@huggingface/transformers", () => {
   const embed = vi.fn((input: string | string[], _opts: Record<string, unknown>) => {
     const texts = Array.isArray(input) ? input : [input];
@@ -18,6 +26,16 @@ vi.mock("@huggingface/transformers", () => {
     env: { allowLocalModels: false, useFSCache: false },
     pipeline: vi.fn(async () => embed),
   };
+});
+
+beforeEach(() => {
+  // Route the embedder's loader through the vi.mock-intercepted bare specifier
+  // instead of the real canonical-shared-deps resolver.
+  _setTransformersImporterForTesting(() => import("@huggingface/transformers") as any);
+});
+
+afterEach(() => {
+  _resetTransformersImporterForTesting();
 });
 
 describe("NomicEmbedder", () => {
@@ -87,7 +105,6 @@ describe("NomicEmbedder", () => {
     // Reach through the private helper via a custom mock that returns zeros.
     const mod: any = await import("@huggingface/transformers");
     const origPipeline = mod.pipeline;
-    const zeroPipe = vi.fn(async () => [0, 0, 0, 0]);
     const wrapped = vi.fn(() => Promise.resolve(() => Promise.resolve({ data: [0, 0, 0, 0] })));
     (mod as any).pipeline = wrapped;
     try {
@@ -145,5 +162,45 @@ describe("NomicEmbedder", () => {
     const pipeline = await (mod.pipeline as any).mock.results[0].value;
     const lastCall = (pipeline as any).mock.calls.at(-1)[0];
     expect(lastCall).toEqual(["search_query: hi"]);
+  });
+});
+
+describe("defaultImportTransformers resolution", () => {
+  // These tests bypass the beforeEach DI hook above and call
+  // defaultImportTransformers() directly with stub resolvers, exercising the
+  // canonical → bare fallback chain and the actionable error path.
+
+  it("uses the canonical shared-deps resolver first when reachable", async () => {
+    const canonical = vi.fn().mockResolvedValue({ marker: "canonical" });
+    const bare = vi.fn().mockResolvedValue({ marker: "bare" });
+    const mod = await defaultImportTransformers(canonical as any, bare as any);
+    expect((mod as any).marker).toBe("canonical");
+    expect(canonical).toHaveBeenCalledTimes(1);
+    expect(bare).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the bare specifier when canonical throws", async () => {
+    const canonical = vi.fn().mockRejectedValue(new Error("ENOENT shared-deps"));
+    const bare = vi.fn().mockResolvedValue({ marker: "bare" });
+    const mod = await defaultImportTransformers(canonical as any, bare as any);
+    expect((mod as any).marker).toBe("bare");
+    expect(canonical).toHaveBeenCalledTimes(1);
+    expect(bare).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws an actionable error referencing `hivemind embeddings install` when both fail", async () => {
+    const canonical = vi.fn().mockRejectedValue(new Error("ENOENT shared-deps"));
+    const bare = vi.fn().mockRejectedValue(new Error("Cannot find package '@huggingface/transformers'"));
+    await expect(defaultImportTransformers(canonical as any, bare as any)).rejects.toThrow(
+      /hivemind embeddings install/,
+    );
+  });
+
+  it("preserves both underlying error messages in the thrown error for diagnostics", async () => {
+    const canonical = vi.fn().mockRejectedValue(new Error("canonical-error-marker"));
+    const bare = vi.fn().mockRejectedValue(new Error("bare-error-marker"));
+    await expect(defaultImportTransformers(canonical as any, bare as any)).rejects.toThrow(
+      /canonical-error-marker.*bare-error-marker/,
+    );
   });
 });

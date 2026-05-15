@@ -2,6 +2,11 @@
 // process — hooks never import this. Kept isolated so the heavyweight transformer
 // dependency is not pulled into every bundled hook.
 
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
 import {
   DEFAULT_DIMS,
   DEFAULT_DTYPE,
@@ -13,11 +18,57 @@ import {
 
 type Embedder = (input: string | string[], opts: Record<string, unknown>) => Promise<{ data: Float32Array | number[] }>;
 
+type TransformersModule = typeof import("@huggingface/transformers");
+type TransformersImporter = () => Promise<TransformersModule>;
+
 export interface NomicOptions {
   repo?: string;
   dtype?: string;
   dims?: number;
 }
+
+// ── transformers resolution ─────────────────────────────────────────────────
+// The daemon may have been spawned from any plugin bundle path (marketplace
+// versioned caches, dev tree, etc.). Bundle-relative `node_modules` resolution
+// is unreliable across marketplace upgrades, so we explicitly look in the
+// canonical shared-deps location that `hivemind embeddings install` populates,
+// and only fall back to the bare specifier (dev tree / colocated install).
+
+async function importFromCanonicalSharedDeps(): Promise<TransformersModule> {
+  const sharedDir = join(homedir(), ".hivemind", "embed-deps");
+  const base = pathToFileURL(`${sharedDir}/`).href;
+  const absMain = createRequire(base).resolve("@huggingface/transformers");
+  return (await import(pathToFileURL(absMain).href)) as TransformersModule;
+}
+
+async function importFromBareSpecifier(): Promise<TransformersModule> {
+  return (await import("@huggingface/transformers")) as TransformersModule;
+}
+
+export async function defaultImportTransformers(
+  canonical: () => Promise<TransformersModule> = importFromCanonicalSharedDeps,
+  bare: () => Promise<TransformersModule> = importFromBareSpecifier,
+): Promise<TransformersModule> {
+  let canonicalErr: unknown;
+  try {
+    return await canonical();
+  } catch (err) {
+    canonicalErr = err;
+  }
+  try {
+    return await bare();
+  } catch (bareErr) {
+    const detail = bareErr instanceof Error ? bareErr.message : String(bareErr);
+    const canonicalDetail = canonicalErr instanceof Error ? canonicalErr.message : String(canonicalErr);
+    throw new Error(
+      `@huggingface/transformers is not installed anywhere reachable. ` +
+        `Run \`hivemind embeddings install\` to install it. ` +
+        `(canonical: ${canonicalDetail}; bare: ${detail})`,
+    );
+  }
+}
+
+let _importTransformers: TransformersImporter = () => defaultImportTransformers();
 
 export class NomicEmbedder {
   private pipeline: Embedder | null = null;
@@ -36,7 +87,7 @@ export class NomicEmbedder {
     if (this.pipeline) return;
     if (this.loading) return this.loading;
     this.loading = (async () => {
-      const mod = await import("@huggingface/transformers");
+      const mod = await _importTransformers();
       mod.env.allowLocalModels = false;
       mod.env.useFSCache = true;
       this.pipeline = (await mod.pipeline("feature-extraction", this.repo, { dtype: this.dtype as "fp32" | "q8" })) as unknown as Embedder;
@@ -87,4 +138,17 @@ export class NomicEmbedder {
     for (let i = 0; i < head.length; i++) head[i] /= norm;
     return head;
   }
+}
+
+// ── Test helpers ────────────────────────────────────────────────────────────
+// Production never calls these. They let unit tests bypass the
+// canonical-shared-deps resolver (which would otherwise hit the real
+// ~/.hivemind/embed-deps/ on dev machines and ignore vi.mock).
+
+export function _setTransformersImporterForTesting(fn: TransformersImporter): void {
+  _importTransformers = fn;
+}
+
+export function _resetTransformersImporterForTesting(): void {
+  _importTransformers = () => defaultImportTransformers();
 }
