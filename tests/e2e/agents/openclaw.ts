@@ -11,7 +11,7 @@
  * `<tmpHome>/.openclaw/extensions/hivemind/dist/index.js` and exercises its
  * registered event handlers directly via a fake `pluginApi`. The plugin's
  * own code paths run end-to-end: SKILL.md injection (`before_prompt_build`),
- * capture INSERT (`agent_end`), skilify worker spawn, the works. What we
+ * capture INSERT (`agent_end`), skillify worker spawn, the works. What we
  * miss vs a real gateway: event ordering across multiple agents, the
  * gateway's own parsing of upstream messages, real concurrency with other
  * gateway operations.

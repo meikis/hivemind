@@ -34,6 +34,7 @@ import type {
   E2ECase,
   MatrixResult,
   ProviderEnv,
+  RunResult,
   TestCredentials,
 } from "./types.js";
 import { ALL_CASES, ALL_DRIVERS, buildMatrix, type MatrixPoint } from "./matrix.js";
@@ -152,19 +153,36 @@ async function runPoint(
   try {
     await a.install(sandbox.home, repoRoot);
     if (c.setup) await c.setup(ctx);
-    const run = await a.run(c.prompt, {
-      home: sandbox.home,
-      repoRoot,
-      sessionId: seedSessionId,
-      providerEnv,
-      timeoutMs: 90_000,
-    });
+    let run: RunResult;
+    if (c.installOnly) {
+      // Install-shape case: no agent spawn. Assertions read from
+      // post-install filesystem / DB state only. We build a dummy
+      // RunResult so the assertion vocabulary keeps working — most
+      // assertions don't reference run.* fields, and the ones that do
+      // (e.g. select-from-db using run.sessionId) get the seed value.
+      run = {
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+        sessionId: seedSessionId,
+        costCents: 0,
+        durationMs: 0,
+      };
+    } else {
+      run = await a.run(c.prompt, {
+        home: sandbox.home,
+        repoRoot,
+        sessionId: seedSessionId,
+        providerEnv,
+        timeoutMs: 90_000,
+      });
+      if (run.exitCode !== 0) {
+        failures.push(`[spawn] exit=${run.exitCode} stderr=${run.stderr.slice(-400)}`);
+      }
+    }
     actualSessionId = run.sessionId;
     costCents = run.costCents;
     durationMs = run.durationMs;
-    if (run.exitCode !== 0) {
-      failures.push(`[spawn] exit=${run.exitCode} stderr=${run.stderr.slice(-400)}`);
-    }
     const runner = makeAssertionRunner(ctx);
     for (const assertion of c.assertions) {
       const reason = await runner.run(assertion, { ctx, run });

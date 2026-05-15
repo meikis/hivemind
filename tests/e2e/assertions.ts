@@ -59,6 +59,12 @@ export function makeAssertionRunner(ctx: CaseContext): AssertionRunner {
           }
           case "hook-log-contains":
             return checkHookLogContains(assertion, ctx.home);
+          case "custom":
+            try {
+              return await assertion.check(actx);
+            } catch (e: unknown) {
+              return labelled(assertion.label, e instanceof Error ? e.message : String(e));
+            }
         }
       } catch (e: unknown) {
         return labelled(

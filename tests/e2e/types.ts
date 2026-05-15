@@ -108,6 +108,15 @@ export interface E2ECase {
   assertions: Assertion[];
   /** Agents this case can't reach (with rationale in a comment next to the entry). */
   skipFor?: AgentId[];
+  /**
+   * When true, the runner does NOT call driver.run() — it only runs
+   * driver.install() + case.setup() and then evaluates assertions
+   * against the post-install filesystem / DB state. Use this for
+   * install-shape cases that assert on side effects of the installer
+   * itself (e.g. "settings.json doesn't contain references to files
+   * that don't exist"). No model API call, no per-agent prompt cost.
+   */
+  installOnly?: boolean;
 }
 
 export interface CaseContext {
@@ -140,7 +149,8 @@ export type Assertion =
   | StdoutContainsAssertion
   | StdoutMatchesAssertion
   | SelectFromDbAssertion
-  | HookLogContainsAssertion;
+  | HookLogContainsAssertion
+  | CustomAssertion;
 
 export interface StdoutContainsAssertion {
   type: "stdout-contains";
@@ -170,6 +180,19 @@ export interface HookLogContainsAssertion {
   /** Substring that must appear in ${home}/.deeplake/hook-debug.log after the run. */
   substring: string;
   label?: string;
+}
+
+/**
+ * Escape hatch for assertions that don't fit the four typed shapes.
+ * Returns null on pass, or a failure-reason string on fail. Use this
+ * sparingly — typed assertions document intent better — but it's
+ * essential for install-shape cases that walk agent-specific config
+ * file structures (no two agents have the same hooks-file layout).
+ */
+export interface CustomAssertion {
+  type: "custom";
+  check: (actx: AssertionContext) => Promise<string | null>;
+  label: string;
 }
 
 export interface AssertionContext {

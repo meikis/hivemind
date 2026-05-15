@@ -24,6 +24,7 @@ import { sqlInjectionProbeCase } from "./cases/05-sql-injection-probe.js";
 import { missingTableSelfHealCase } from "./cases/06-missing-table-self-heal.js";
 import { unicodeRoundtripCase } from "./cases/07-unicode-roundtrip.js";
 import { openclawToolsCase } from "./cases/08-openclaw-tools.js";
+import { installNoBrokenPathsCase } from "./cases/09-install-no-broken-paths.js";
 
 export const ALL_DRIVERS: AgentDriver[] = [
   claudeCodeDriver,
@@ -43,6 +44,7 @@ export const ALL_CASES: E2ECase[] = [
   missingTableSelfHealCase,
   unicodeRoundtripCase,
   openclawToolsCase,
+  installNoBrokenPathsCase,
 ];
 
 export interface MatrixPoint {

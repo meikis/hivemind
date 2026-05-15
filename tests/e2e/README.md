@@ -35,8 +35,15 @@ Each case asserts on a specific behavioral surface, mapped back to `RELEASE_CHEC
 | `06-missing-table-self-heal` | Lazy CREATE TABLE IF NOT EXISTS on first INSERT after drop (§6 backend quirks) | all 6 | — |
 | `07-unicode-roundtrip` | Emoji + RTL + smart quotes + backslashes survive JSONB roundtrip byte-for-byte (§2 edge content) | all 6 | — |
 | `08-openclaw-tools` | `hivemind_search` returns seeded sentinel via openclaw tool registration (§3 openclaw row + §4 openclaw discoverability) | openclaw | 5 CLI (they don't register MCP tools the harness invokes directly; equivalents in 02/03) |
+| `09-install-no-broken-paths` | After `hivemind <agent> install`, every hook command in the resulting config file points at a file that exists on disk. Plus claude-code-only auto-heal check: pre-seeded broken entry was removed by `cleanupBrokenSettingsHooks`. Install-shape (no agent spawn). | 4 hooks-config agents | pi (TS extension ref, no command paths) / openclaw (gateway loader, no hooks.json) |
 
-Total: **48 matrix points** (40 live, 8 explicitly skipped with rationale).
+Total: **54 matrix points** (44 live, 10 explicitly skipped with rationale).
+
+### Why case 09 matters specifically
+
+Case 09 is the matrix's answer to a destructive hotfix that shipped to npm: PR #128 added a `syncHivemindHooksToSettings()` helper that wrote hardcoded path entries into `~/.claude/settings.json` for marketplace-only users — every hook ENOENT'd at session start. Shipped in 0.7.23 / 0.7.24, hotfixed in PR #166. Case 09 runs the real `hivemind <agent> install` flow in a clean tmp HOME and walks the resulting config: any command pointing at a nonexistent file fails the assertion. Plus the claude-code-only auto-heal sub-assertion pre-seeds a known-broken entry and verifies `cleanupBrokenSettingsHooks` removed it.
+
+Earlier cases (`01-capture-smoke` etc.) didn't catch this because the claude-code driver uses `claude --plugin-dir` for runtime cases — that bypasses the install flow entirely. Case 09 is install-shape (`installOnly: true`) and triggers the real installer subprocess to exercise the path PR #128 broke.
 
 ## Running it
 
