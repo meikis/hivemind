@@ -198,7 +198,12 @@ async function runPoint(
         repoRoot,
         sessionId: seedSessionId,
         providerEnv,
-        timeoutMs: 90_000,
+        // 180s spawn budget — empirically 90s isn't enough for pi/hermes
+        // cases where the model run, openrouter routing latency, and
+        // session-end wiki-worker INSERT all compound. Single-turn
+        // claude-code cases still complete in 5-30s; the bigger budget
+        // only matters for the slow tail.
+        timeoutMs: 180_000,
       });
       if (run.exitCode !== 0) {
         failures.push(`[spawn] exit=${run.exitCode} stderr=${run.stderr.slice(-400)}`);

@@ -23,7 +23,22 @@
  */
 
 import { DeeplakeApi } from "../../../src/deeplake-api.js";
-import type { E2ECase } from "../types.js";
+import type { CaseContext, E2ECase } from "../types.js";
+
+/**
+ * Per-run table name derived from the case's session_id. Using a unique
+ * table name (instead of the canonical `sessions`) means this case's
+ * destructive DROP doesn't poison the workspace for downstream cases.
+ * Prior iteration of this case dropped the shared sessions table, and
+ * the schema-drift from the lazy recreate cascaded into 5+ failures in
+ * subsequent cases. Per-run isolation eliminates that whole class.
+ *
+ * sqlIdent allows letters/digits/underscores, so we strip dashes from
+ * the runId-bearing session_id.
+ */
+function perRunSessionsTable(ctx: CaseContext): string {
+  return `sessions_e2e_06_${ctx.sessionId.replace(/[^A-Za-z0-9_]/g, "_")}`;
+}
 
 const missingTableSelfHealCase: E2ECase = {
   id: "06-missing-table-self-heal",
@@ -32,24 +47,29 @@ const missingTableSelfHealCase: E2ECase = {
   prompt:
     "Reply with the single word 'heal' once and stop. Do not call tools.",
   async setup(ctx) {
-    // DROP the sessions table; the capture path must self-heal. We use
-    // IF EXISTS so the case is idempotent across reruns where prior
-    // assertions left the table in either state.
+    // Point this case's agent at a per-run sessions table via env var so
+    // the destructive DROP below scopes to THAT table, not the workspace-
+    // shared `sessions`. The capture path reads HIVEMIND_SESSIONS_TABLE
+    // at hook entry, so setting it here propagates to the spawn the
+    // runner makes next.
+    const perRunTable = perRunSessionsTable(ctx);
+    process.env.HIVEMIND_SESSIONS_TABLE = perRunTable;
+
+    // Drop the per-run table (idempotent — won't exist on a clean run;
+    // may exist from a prior run that didn't get cleaned up).
     const api = new DeeplakeApi(
       ctx.creds.token,
       ctx.creds.apiUrl,
       ctx.creds.orgId,
       ctx.creds.workspaceId,
-      ctx.creds.sessionsTable,
+      perRunTable,
     );
     try {
-      await api.query(`DROP TABLE IF EXISTS "${ctx.creds.sessionsTable}"`);
+      await api.query(`DROP TABLE IF EXISTS "${perRunTable}"`);
     } catch {
-      // Some Deeplake deployments refuse DROP TABLE for the canonical
-      // sessions/memory names. If the drop fails, the case effectively
-      // becomes a no-op smoke; the row-landed assertion still verifies
-      // the happy path. We don't fail the case on drop failure because
-      // the destructive setup is best-effort by design.
+      // Best-effort; if the drop fails the assertion still asserts on
+      // the row landing, which can only succeed if either the table
+      // was already absent (fine) or self-heal recreated it.
     }
   },
   assertions: [
@@ -57,7 +77,7 @@ const missingTableSelfHealCase: E2ECase = {
       type: "select-from-db",
       label: "sessions table exists after the run (self-healed)",
       sql: ({ ctx }) =>
-        `SELECT count(*) AS n FROM "${ctx.creds.sessionsTable}"`,
+        `SELECT count(*) AS n FROM "${perRunSessionsTable(ctx)}"`,
       expect: (rows) => {
         if (rows.length === 0) throw new Error("sessions count returned no rows — table never came back");
       },
@@ -66,7 +86,7 @@ const missingTableSelfHealCase: E2ECase = {
       type: "select-from-db",
       label: "this run's session_id landed at least one row in the recreated table",
       sql: ({ ctx, run }) =>
-        `SELECT count(*) AS n FROM "${ctx.creds.sessionsTable}" ` +
+        `SELECT count(*) AS n FROM "${perRunSessionsTable(ctx)}" ` +
         `WHERE path ILIKE '%${run.sessionId.replace(/'/g, "''")}%'`,
       expect: (rows) => {
         if (rows.length === 0) throw new Error("count query returned no rows");
@@ -74,6 +94,28 @@ const missingTableSelfHealCase: E2ECase = {
         if (!Number.isFinite(n) || n < 1) {
           throw new Error(`expected ≥ 1 row for the run, got ${n} — lazy CREATE TABLE didn't recover`);
         }
+      },
+    },
+    // Cleanup: drop the per-run table AND unset the env var so
+    // subsequent cases in the same matrix run aren't affected. We use a
+    // `custom` assertion as the teardown vehicle because there's no
+    // explicit teardown hook on E2ECase; custom assertions always run
+    // after the typed ones and can do filesystem/DB cleanup safely.
+    {
+      type: "custom",
+      label: "teardown — drop the per-run sessions table + restore env",
+      check: async ({ ctx }) => {
+        const perRunTable = perRunSessionsTable(ctx);
+        const api = new DeeplakeApi(
+          ctx.creds.token,
+          ctx.creds.apiUrl,
+          ctx.creds.orgId,
+          ctx.creds.workspaceId,
+          perRunTable,
+        );
+        try { await api.query(`DROP TABLE IF EXISTS "${perRunTable}"`); } catch { /* best-effort */ }
+        delete process.env.HIVEMIND_SESSIONS_TABLE;
+        return null;
       },
     },
   ],
