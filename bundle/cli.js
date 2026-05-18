@@ -5101,7 +5101,8 @@ import { dirname as dirname3, join as join19 } from "node:path";
 import { homedir as homedir8 } from "node:os";
 import { join as join18 } from "node:path";
 function getStateDir() {
-  return process.env.HIVEMIND_STATE_DIR ?? join18(homedir8(), ".deeplake", "state", "skillify");
+  const override = process.env.HIVEMIND_STATE_DIR?.trim();
+  return override && override.length > 0 ? override : join18(homedir8(), ".deeplake", "state", "skillify");
 }
 
 // dist/src/skillify/legacy-migration.js
@@ -5122,8 +5123,8 @@ function migrateLegacyStateDir() {
     dlog(`migrated ${legacy} -> ${current}`);
   } catch (err) {
     const code = err.code;
-    if (code === "EXDEV" || code === "EPERM") {
-      dlog(`migration failed (${code}); leaving legacy dir in place`);
+    if (code === "EXDEV" || code === "EPERM" || code === "ENOENT" || code === "EEXIST" || code === "ENOTEMPTY") {
+      dlog(`migration skipped (${code}); legacy dir left as-is or another process handled it`);
       return;
     }
     throw err;

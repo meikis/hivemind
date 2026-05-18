@@ -1712,7 +1712,8 @@ import { dirname as dirname6, join as join16 } from "node:path";
 import { homedir as homedir12 } from "node:os";
 import { join as join15 } from "node:path";
 function getStateDir() {
-  return process.env.HIVEMIND_STATE_DIR ?? join15(homedir12(), ".deeplake", "state", "skillify");
+  const override = process.env.HIVEMIND_STATE_DIR?.trim();
+  return override && override.length > 0 ? override : join15(homedir12(), ".deeplake", "state", "skillify");
 }
 
 // dist/src/skillify/legacy-migration.js
@@ -1733,8 +1734,8 @@ function migrateLegacyStateDir() {
     dlog2(`migrated ${legacy} -> ${current}`);
   } catch (err) {
     const code = err.code;
-    if (code === "EXDEV" || code === "EPERM") {
-      dlog2(`migration failed (${code}); leaving legacy dir in place`);
+    if (code === "EXDEV" || code === "EPERM" || code === "ENOENT" || code === "EEXIST" || code === "ENOTEMPTY") {
+      dlog2(`migration skipped (${code}); legacy dir left as-is or another process handled it`);
       return;
     }
     throw err;
@@ -1889,7 +1890,7 @@ function tryAcquireWorkerLock(projectKey, maxAgeMs = 10 * 60 * 1e3) {
     try {
       unlinkSync4(p);
     } catch (unlinkErr) {
-      if (unlinkErr?.code !== "EISDIR" && unlinkErr?.code !== "EPERM") {
+      if (unlinkErr?.code !== "EISDIR" && unlinkErr?.code !== "EPERM" && unlinkErr?.code !== "ENOENT") {
         dlog3(`could not unlink stale worker lock for ${projectKey}: ${unlinkErr.message}`);
         return false;
       }
