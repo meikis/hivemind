@@ -34,8 +34,9 @@ export interface NomicOptions {
 // canonical shared-deps location that `hivemind embeddings install` populates,
 // and only fall back to the bare specifier (dev tree / colocated install).
 
-async function importFromCanonicalSharedDeps(): Promise<TransformersModule> {
-  const sharedDir = join(homedir(), ".hivemind", "embed-deps");
+export async function _importFromCanonicalSharedDeps(
+  sharedDir: string = join(homedir(), ".hivemind", "embed-deps"),
+): Promise<TransformersModule> {
   const base = pathToFileURL(`${sharedDir}/`).href;
   // `createRequire(base).resolve(...)` honors the package's `"require"`
   // conditional export, which for @huggingface/transformers v3 points at
@@ -46,15 +47,15 @@ async function importFromCanonicalSharedDeps(): Promise<TransformersModule> {
   // hides them under `.default`).
   const absMain = createRequire(base).resolve("@huggingface/transformers");
   const mod = await import(pathToFileURL(absMain).href);
-  return normalizeTransformersModule(mod);
+  return _normalizeTransformersModule(mod);
 }
 
-async function importFromBareSpecifier(): Promise<TransformersModule> {
+export async function _importFromBareSpecifier(): Promise<TransformersModule> {
   const mod = await import("@huggingface/transformers");
-  return normalizeTransformersModule(mod);
+  return _normalizeTransformersModule(mod);
 }
 
-function normalizeTransformersModule(mod: unknown): TransformersModule {
+export function _normalizeTransformersModule(mod: unknown): TransformersModule {
   const m = mod as { default?: TransformersModule } & TransformersModule;
   if (m.default && typeof m.default === "object" && "pipeline" in m.default) {
     return m.default;
@@ -63,8 +64,8 @@ function normalizeTransformersModule(mod: unknown): TransformersModule {
 }
 
 export async function defaultImportTransformers(
-  canonical: () => Promise<TransformersModule> = importFromCanonicalSharedDeps,
-  bare: () => Promise<TransformersModule> = importFromBareSpecifier,
+  canonical: () => Promise<TransformersModule> = _importFromCanonicalSharedDeps,
+  bare: () => Promise<TransformersModule> = _importFromBareSpecifier,
 ): Promise<TransformersModule> {
   let canonicalErr: unknown;
   try {
@@ -85,7 +86,11 @@ export async function defaultImportTransformers(
   }
 }
 
-let _importTransformers: TransformersImporter = () => defaultImportTransformers();
+// `defaultImportTransformers` has all-defaulted params, so calling it bare
+// (`defaultImportTransformers()`) is fine — assign the function reference
+// directly instead of wrapping in an arrow that v8 counts as a separate
+// uncovered function.
+let _importTransformers: TransformersImporter = defaultImportTransformers;
 
 export class NomicEmbedder {
   private pipeline: Embedder | null = null;
@@ -167,5 +172,5 @@ export function _setTransformersImporterForTesting(fn: TransformersImporter): vo
 }
 
 export function _resetTransformersImporterForTesting(): void {
-  _importTransformers = () => defaultImportTransformers();
+  _importTransformers = defaultImportTransformers;
 }

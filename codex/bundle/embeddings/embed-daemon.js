@@ -27,25 +27,24 @@ function pidPathFor(uid, dir = DEFAULT_SOCKET_DIR) {
 }
 
 // dist/src/embeddings/nomic.js
-async function importFromCanonicalSharedDeps() {
-  const sharedDir = join(homedir(), ".hivemind", "embed-deps");
+async function _importFromCanonicalSharedDeps(sharedDir = join(homedir(), ".hivemind", "embed-deps")) {
   const base = pathToFileURL(`${sharedDir}/`).href;
   const absMain = createRequire(base).resolve("@huggingface/transformers");
   const mod = await import(pathToFileURL(absMain).href);
-  return normalizeTransformersModule(mod);
+  return _normalizeTransformersModule(mod);
 }
-async function importFromBareSpecifier() {
+async function _importFromBareSpecifier() {
   const mod = await import("@huggingface/transformers");
-  return normalizeTransformersModule(mod);
+  return _normalizeTransformersModule(mod);
 }
-function normalizeTransformersModule(mod) {
+function _normalizeTransformersModule(mod) {
   const m = mod;
   if (m.default && typeof m.default === "object" && "pipeline" in m.default) {
     return m.default;
   }
   return m;
 }
-async function defaultImportTransformers(canonical = importFromCanonicalSharedDeps, bare = importFromBareSpecifier) {
+async function defaultImportTransformers(canonical = _importFromCanonicalSharedDeps, bare = _importFromBareSpecifier) {
   let canonicalErr;
   try {
     return await canonical();
@@ -60,7 +59,7 @@ async function defaultImportTransformers(canonical = importFromCanonicalSharedDe
     throw new Error(`@huggingface/transformers is not installed anywhere reachable. Run \`hivemind embeddings install\` to install it. (canonical: ${canonicalDetail}; bare: ${detail})`);
   }
 }
-var _importTransformers = () => defaultImportTransformers();
+var _importTransformers = defaultImportTransformers;
 var NomicEmbedder = class {
   pipeline = null;
   loading = null;
