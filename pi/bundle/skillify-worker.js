@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 // dist/src/skillify/skillify-worker.js
-import { readFileSync as readFileSync3, writeFileSync as writeFileSync3, existsSync as existsSync5, appendFileSync as appendFileSync2, rmSync as rmSync2 } from "node:fs";
+import { readFileSync as readFileSync3, writeFileSync as writeFileSync3, existsSync as existsSync5, appendFileSync as appendFileSync2, rmSync } from "node:fs";
 import { join as join7 } from "node:path";
 
 // dist/src/utils/debug.js
@@ -561,7 +561,7 @@ function resolveRecordScope(args) {
 }
 
 // dist/src/skillify/state.js
-import { readFileSync as readFileSync2, writeFileSync as writeFileSync2, writeSync, mkdirSync as mkdirSync2, renameSync as renameSync2, rmSync, existsSync as existsSync4, lstatSync, unlinkSync, openSync, closeSync } from "node:fs";
+import { readFileSync as readFileSync2, writeFileSync as writeFileSync2, writeSync, mkdirSync as mkdirSync2, renameSync as renameSync2, rmdirSync, existsSync as existsSync4, lstatSync, unlinkSync, openSync, closeSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join as join6, basename } from "node:path";
@@ -911,7 +911,7 @@ function cleanup(keep) {
     return;
   }
   try {
-    rmSync2(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
   } catch (e) {
     wlog(`cleanup failed: ${e.message}`);
   }

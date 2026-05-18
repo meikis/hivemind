@@ -860,7 +860,7 @@ function spawnSkillifyWorker(opts) {
 }
 
 // dist/src/skillify/state.js
-import { readFileSync as readFileSync4, writeFileSync as writeFileSync4, writeSync, mkdirSync as mkdirSync5, renameSync as renameSync2, rmSync, existsSync as existsSync5, lstatSync, unlinkSync, openSync, closeSync } from "node:fs";
+import { readFileSync as readFileSync4, writeFileSync as writeFileSync4, writeSync, mkdirSync as mkdirSync5, renameSync as renameSync2, rmdirSync, existsSync as existsSync5, lstatSync, unlinkSync, openSync, closeSync } from "node:fs";
 import { execSync as execSync2 } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join as join11, basename } from "node:path";
@@ -1044,9 +1044,9 @@ function tryAcquireWorkerLock(projectKey, maxAgeMs = 10 * 60 * 1e3) {
       }
       if (isDir) {
         try {
-          rmSync(p, { recursive: true, force: true });
+          rmdirSync(p);
         } catch (rmErr) {
-          dlog2(`could not remove stale dir-lock for ${projectKey}: ${rmErr.message}`);
+          dlog2(`could not rmdir stale lock for ${projectKey}: ${rmErr.message}`);
           return false;
         }
       }

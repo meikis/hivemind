@@ -6927,7 +6927,7 @@ function wrapAt(s, max) {
 
 // dist/src/commands/skillify.js
 function stateDir() {
-  return join30(homedir17(), ".deeplake", "state", "skillify");
+  return getStateDir();
 }
 function showStatus() {
   const cfg = loadScopeConfig();

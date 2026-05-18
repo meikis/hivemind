@@ -998,7 +998,7 @@ function spawnSkillifyWorker(opts) {
 }
 
 // dist/src/skillify/state.js
-import { readFileSync as readFileSync5, writeFileSync as writeFileSync5, writeSync as writeSync2, mkdirSync as mkdirSync6, renameSync as renameSync3, rmSync, existsSync as existsSync6, lstatSync, unlinkSync as unlinkSync2, openSync as openSync2, closeSync as closeSync2 } from "node:fs";
+import { readFileSync as readFileSync5, writeFileSync as writeFileSync5, writeSync as writeSync2, mkdirSync as mkdirSync6, renameSync as renameSync3, rmdirSync, existsSync as existsSync6, lstatSync, unlinkSync as unlinkSync2, openSync as openSync2, closeSync as closeSync2 } from "node:fs";
 import { execSync as execSync2 } from "node:child_process";
 import { createHash } from "node:crypto";
 import { join as join12, basename } from "node:path";
@@ -1199,9 +1199,9 @@ function tryAcquireWorkerLock(projectKey, maxAgeMs = 10 * 60 * 1e3) {
       }
       if (isDir) {
         try {
-          rmSync(p, { recursive: true, force: true });
+          rmdirSync(p);
         } catch (rmErr) {
-          dlog3(`could not remove stale dir-lock for ${projectKey}: ${rmErr.message}`);
+          dlog3(`could not rmdir stale lock for ${projectKey}: ${rmErr.message}`);
           return false;
         }
       }
@@ -1925,7 +1925,7 @@ function embeddingSqlLiteral(vec) {
 }
 
 // dist/src/embeddings/self-heal.js
-import { existsSync as existsSync10, lstatSync as lstatSync2, mkdirSync as mkdirSync10, readlinkSync, renameSync as renameSync6, rmSync as rmSync2, symlinkSync, statSync as statSync2 } from "node:fs";
+import { existsSync as existsSync10, lstatSync as lstatSync2, mkdirSync as mkdirSync10, readlinkSync, renameSync as renameSync6, rmSync, symlinkSync, statSync as statSync2 } from "node:fs";
 import { homedir as homedir12 } from "node:os";
 import { basename as basename2, dirname as dirname6, join as join18 } from "node:path";
 function ensurePluginNodeModulesLink(opts) {
@@ -1959,7 +1959,7 @@ function ensurePluginNodeModulesLink(opts) {
       return { kind: "linked-elsewhere", link, existingTarget };
     } catch {
       try {
-        rmSync2(link);
+        rmSync(link);
       } catch {
       }
       const recreated = createSymlinkAtomic(target, link);
@@ -1978,7 +1978,7 @@ function createSymlinkAtomic(target, link) {
       mkdirSync10(parent, { recursive: true });
     const tmp = `${link}.tmp.${process.pid}`;
     try {
-      rmSync2(tmp, { force: true });
+      rmSync(tmp, { force: true });
     } catch {
     }
     symlinkSync(target, tmp);
