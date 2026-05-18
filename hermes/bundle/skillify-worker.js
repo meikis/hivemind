@@ -8,13 +8,15 @@ import { join as join6 } from "node:path";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-var DEBUG = process.env.HIVEMIND_DEBUG === "1";
 var LOG = join(homedir(), ".deeplake", "hook-debug.log");
+function isDebug() {
+  return process.env.HIVEMIND_DEBUG === "1";
+}
 function utcTimestamp(d = /* @__PURE__ */ new Date()) {
   return d.toISOString().replace("T", " ").slice(0, 19) + " UTC";
 }
 function log(tag, msg) {
-  if (!DEBUG)
+  if (!isDebug())
     return;
   appendFileSync(LOG, `${(/* @__PURE__ */ new Date()).toISOString()} [${tag}] ${msg}
 `);
@@ -701,6 +703,7 @@ function releaseWorkerLock(projectKey) {
 
 // dist/src/skillify/skillify-worker.js
 var cfg = JSON.parse(readFileSync3(process.argv[2], "utf-8"));
+globalThis.__hivemind_tuning__ = cfg.tuning ?? {};
 var tmpDir = cfg.tmpDir;
 var verdictPath = join6(tmpDir, "verdict.json");
 var promptPath = join6(tmpDir, "prompt.txt");

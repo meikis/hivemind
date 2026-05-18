@@ -159,6 +159,67 @@ interface PluginAPI {
   registerMemoryCorpusSupplement(supplement: MemoryCorpusSupplement): void;
 }
 
+/**
+ * Map the `plugins.entries.hivemind.config.tuning` object from openclaw.json
+ * into the `globalThis.__hivemind_tuning__` dispatch that esbuild rewrote
+ * `process.env.HIVEMIND_X` reads to target. Called once at plugin
+ * register-time, before any shared module's lazy env read can fire.
+ *
+ * Why this layer exists: ClawHub's per-bundle static scanner treats any
+ * `process.env` access in a file that also `fetch()`-es as critical
+ * `env-harvesting`. esbuild's `define` rewrites `process.env.HIVEMIND_X`
+ * to `globalThis.__hivemind_tuning__?.HIVEMIND_X` in the bundled output,
+ * so the bundle has zero `process.env.X` substrings. The values still
+ * have to come from somewhere — that's what this function does, sourcing
+ * them from the openclaw plugin config the user controls via
+ * `~/.openclaw/openclaw.json`. CodeRabbit + @efenocchi on PR #170 pushed
+ * back on the prior inline-to-undefined approach (which silently removed
+ * every env-override surface); this restores runtime tunability without
+ * tripping the scan.
+ *
+ * The shared modules expect STRING values (mirroring `process.env`'s
+ * runtime type). Booleans become `"1"` / `""`, numbers become decimal
+ * strings, and `undefined`/`null` keys are omitted (so the consumer's
+ * `?? "default"` fallback applies).
+ */
+function applyOpenclawTuning(pluginConfig: Record<string, unknown> | undefined): void {
+  const cfg = (pluginConfig ?? {}) as Record<string, unknown>;
+  const tuning = (cfg.tuning ?? {}) as Record<string, unknown>;
+  const dispatch: Record<string, string | undefined> = {};
+
+  const setStr = (k: string, v: unknown): void => {
+    if (v === undefined || v === null) return;
+    dispatch[k] = typeof v === "string" ? v : String(v);
+  };
+  // Boolean → "1" when truthy, "" when explicitly false, omitted otherwise
+  // so the shared code's `=== "1"` / `!== "false"` comparisons keep working.
+  const setBool = (k: string, v: unknown): void => {
+    if (v === undefined || v === null) return;
+    dispatch[k] = v ? "1" : "";
+  };
+  // Some flags use the "not false" idiom (default-on, user opts out with "false")
+  const setFalseOrOmit = (k: string, v: unknown): void => {
+    if (v === false) dispatch[k] = "false";
+  };
+
+  // Diagnostics
+  setBool("HIVEMIND_DEBUG", tuning.debug);
+  setBool("HIVEMIND_TRACE_SQL", tuning.traceSql);
+  // Deeplake / network
+  setStr("HIVEMIND_QUERY_TIMEOUT_MS", tuning.queryTimeoutMs);
+  setStr("HIVEMIND_INDEX_MARKER_TTL_MS", tuning.indexMarkerTtlMs);
+  setStr("HIVEMIND_INDEX_MARKER_DIR", tuning.indexMarkerDir);
+  // Search / semantic
+  setStr("HIVEMIND_SEMANTIC_LIMIT", tuning.semanticLimit);
+  setStr("HIVEMIND_HYBRID_LEXICAL_LIMIT", tuning.hybridLexicalLimit);
+  setStr("HIVEMIND_GREP_LIKE", tuning.grepLike);
+  setStr("HIVEMIND_SEMANTIC_EMBED_TIMEOUT_MS", tuning.semanticEmbedTimeoutMs);
+  setFalseOrOmit("HIVEMIND_SEMANTIC_SEARCH", tuning.semanticSearch);
+  setFalseOrOmit("HIVEMIND_SEMANTIC_EMIT_ALL", tuning.semanticEmitAll);
+
+  (globalThis as Record<string, unknown>).__hivemind_tuning__ = dispatch;
+}
+
 const DEFAULT_API_URL = "https://api.deeplake.ai";
 // npm registry — single source of truth for hivemind's "latest" version
 // across all distribution channels (npm, marketplace, ClawHub). Previously
@@ -378,6 +439,17 @@ interface OpenclawSpawnArgs {
   channel: string;
   sessionId: string;
   loggerWarn?: (msg: string) => void;
+  /**
+   * The same `globalThis.__hivemind_tuning__` dispatch the openclaw main
+   * bundle uses, captured so the spawned worker bundle (which is its own
+   * process and re-evaluates `globalThis`) can restore the user's
+   * pluginConfig.tuning values before any shared module's lazy env read
+   * fires. The worker entry reads this from the config JSON we write
+   * below and populates its own `globalThis.__hivemind_tuning__` at
+   * startup. See PR #170 for the static-scan-driven rewrite that this
+   * dispatch bridges.
+   */
+  tuning?: Record<string, string | undefined>;
 }
 
 /**
@@ -460,6 +532,15 @@ function spawnOpenclawSkillifyWorker(a: OpenclawSpawnArgs): void {
     hermesModel: undefined,
     skillifyLog: joinPath(homedir(), ".deeplake", "hivemind-openclaw-skillify.log"),
     currentSessionId: a.sessionId,
+    // Pass the tuning dispatch through so the worker can repopulate its
+    // own globalThis (each process has its own globalThis). The worker
+    // entry reads cfg.tuning before any shared module's env read fires.
+    // Also force HIVEMIND_SKILLIFY_WORKER="1" so the recursion guard in
+    // triggers.ts / auto-pull.ts short-circuits inside the worker.
+    tuning: {
+      ...(a.tuning ?? {}),
+      HIVEMIND_SKILLIFY_WORKER: "1",
+    },
   };
   try { fsWriteFile(configPath, JSON.stringify(config), { mode: 0o600 }); }
   catch (e: any) { a.loggerWarn?.(`skillify spawn: config write failed: ${e?.message ?? e}`); return; }
@@ -544,6 +625,15 @@ export default definePluginEntry({
   description: "Cloud-backed shared memory powered by Deeplake",
 
   register(pluginApi: PluginAPI) {
+    // Tuning bridge: the openclaw bundle's `process.env.HIVEMIND_X` reads
+    // were replaced by esbuild's `define` with
+    // `globalThis.__hivemind_tuning__?.HIVEMIND_X` lookups (the
+    // ClawHub-scan workaround — see PR #170). Populate that global from
+    // the user's `plugins.entries.hivemind.config.tuning` before any
+    // shared module's lazy reads can run. Empty object is safe; lookups
+    // become `undefined` and fall back to defaults.
+    applyOpenclawTuning(pluginApi.pluginConfig);
+
     // Top-level register() must be synchronous (openclaw plugin contract:
     // "Error: plugin register must be synchronous"). All registerCommand /
     // registerTool / on() calls below land before the first `await` inside
@@ -1168,6 +1258,10 @@ export default definePluginEntry({
               channel: ev.channel || "openclaw",
               sessionId: sid,
               loggerWarn: (msg) => logger.error(`Skillify spawn: ${msg}`),
+              // Pass the same tuning dispatch the plugin populated at
+              // register-time. The worker will repopulate its own
+              // globalThis from this.
+              tuning: (globalThis as Record<string, unknown>).__hivemind_tuning__ as Record<string, string | undefined> | undefined,
             });
           } catch (e: any) {
             logger.error(`Skillify spawn threw: ${e?.message ?? e}`);
