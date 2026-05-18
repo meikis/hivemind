@@ -42,6 +42,15 @@ export interface AgentDriver {
    */
   providerKey: ProviderKey;
   /**
+   * One-shot auth precheck. Called once per matrix run BEFORE any of this
+   * agent's cases fire. Returns null if the agent CLI looks authenticated
+   * and ready to spawn; returns a short failure reason string if not (which
+   * the runner uses to clean-skip ALL of this agent's cases with one
+   * descriptive `[skip] <reason>` line instead of N copy-pasted stack
+   * traces). Drivers that don't need an auth check (openclaw) can omit.
+   */
+  precheck?(): Promise<{ ready: true } | { ready: false; reason: string }>;
+  /**
    * Install hivemind hooks into the given (tmp) HOME. For agents that
    * support a session-only plugin flag (e.g. `claude --plugin-dir`), this
    * may be a no-op and the flag is set in run() instead.

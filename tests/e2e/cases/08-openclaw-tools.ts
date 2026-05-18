@@ -44,18 +44,16 @@ const openclawToolsCase: E2ECase = {
       ctx.creds.workspaceId,
       ctx.creds.memoryTable,
     );
+    await memoryApi.ensureTable(ctx.creds.memoryTable);
     const path = `/summaries/e2e-openclaw/${ctx.sessionId}.md`;
-    const message = JSON.stringify({
-      type: "summary",
-      session_id: ctx.sessionId,
-      content: `# openclaw tool sentinel\n\nMarker: ${OC_SENTINEL}\n`,
-    }).replace(/'/g, "''");
+    const body = `# openclaw tool sentinel\n\nMarker: ${OC_SENTINEL}\n`;
+    const now = new Date().toISOString();
     await memoryApi.query(
       `INSERT INTO "${ctx.creds.memoryTable}" ` +
-      `(id, path, filename, message, author, size_bytes, project, description, agent, creation_date, last_update_date) ` +
-      `VALUES (gen_random_uuid(), '${path}', '${ctx.sessionId}.md', '${message}'::jsonb, ` +
-      `'e2e', ${Buffer.byteLength(message, "utf-8")}, 'e2e', 'openclaw-tool-sentinel', '${ctx.agent}', ` +
-      `CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      `(id, path, filename, summary, author, mime_type, size_bytes, project, description, agent, plugin_version, creation_date, last_update_date) ` +
+      `VALUES (gen_random_uuid(), '${path}', '${ctx.sessionId}.md', '${body.replace(/'/g, "''")}', ` +
+      `'e2e', 'text/markdown', ${Buffer.byteLength(body, "utf-8")}, 'e2e', 'openclaw-tool-sentinel', '${ctx.agent}', ` +
+      `'e2e-test', '${now}', '${now}')`,
     );
   },
   assertions: [

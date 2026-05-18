@@ -35,26 +35,29 @@ const grepMemorySummariesCase: E2ECase = {
     // Insert a deterministic memory row with our sentinel in the message
     // body. Path embeds the session_id so cleanup sweeps it. Schema
     // matches what the capture hook would produce — minimal fields only.
+    // Memory table schema (see DeeplakeApi.ensureTable() in src/deeplake-
+    // api.ts): id, path, filename, summary, summary_embedding, author,
+    // mime_type, size_bytes, project, description, agent, plugin_version,
+    // creation_date, last_update_date. The `summary` column is TEXT, not
+    // JSONB — seed plain markdown body.
+    await memoryApi.ensureTable(ctx.creds.memoryTable);
     const path = `/summaries/e2e/${ctx.sessionId}.md`;
-    const message = JSON.stringify({
-      type: "summary",
-      session_id: ctx.sessionId,
-      content: `## E2E grep sentinel\n\nMarker: ${SENTINEL}\n`,
-    }).replace(/'/g, "''");
+    const body = `## E2E grep sentinel\n\nMarker: ${SENTINEL}\n`;
+    const now = new Date().toISOString();
     await memoryApi.query(
       `INSERT INTO "${ctx.creds.memoryTable}" ` +
-      `(id, path, filename, message, author, size_bytes, project, description, agent, creation_date, last_update_date) ` +
-      `VALUES (gen_random_uuid(), '${path}', '${ctx.sessionId}.md', '${message}'::jsonb, ` +
-      `'e2e', ${Buffer.byteLength(message, "utf-8")}, 'e2e', 'grep-sentinel', '${ctx.agent}', ` +
-      `CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      `(id, path, filename, summary, author, mime_type, size_bytes, project, description, agent, plugin_version, creation_date, last_update_date) ` +
+      `VALUES (gen_random_uuid(), '${path}', '${ctx.sessionId}.md', '${body.replace(/'/g, "''")}', ` +
+      `'e2e', 'text/markdown', ${Buffer.byteLength(body, "utf-8")}, 'e2e', 'grep-sentinel', '${ctx.agent}', ` +
+      `'e2e-test', '${now}', '${now}')`,
     );
   },
   assertions: [
-    {
-      type: "hook-log-contains",
-      substring: "direct grep",
-      label: "grep-direct intercept fired",
-    },
+    // Stdout is the only reliable signal: the seeded sentinel either
+    // makes it to the agent (intercept fired and returned the row) or
+    // it doesn't (real-FS grep on the virtual mount returns nothing).
+    // The intercept's log markers vary by compile path; the user-
+    // visible result is what matters.
     {
       type: "stdout-contains",
       substring: SENTINEL,

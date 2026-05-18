@@ -104,13 +104,20 @@ function loadProviderEnv(): ProviderEnv {
   };
 }
 
-function isReady(agent: AgentDriver, env: ProviderEnv): { ready: boolean; reason: string | null } {
-  // Drivers with providerKey === null don't make any model API call (e.g.
-  // openclaw fires hook events programmatically); never gated on env.
-  if (agent.providerKey === null) return { ready: true, reason: null };
-  const key = env[agent.providerKey];
-  if (key) return { ready: true, reason: null };
-  return { ready: false, reason: `${agent.providerKey} not set` };
+function isReady(_agent: AgentDriver, _env: ProviderEnv): { ready: boolean; reason: string | null } {
+  // Every supported agent CLI maintains its own auth state (claude via
+  // SSO / OAuth, codex via OpenAI login, cursor-agent via Cursor login,
+  // hermes via configured provider, pi via gemini auth, openclaw via the
+  // gateway's own creds). The harness used to skip when the matching
+  // env-var key wasn't exported — but that gate was redundant: if the
+  // CLI is logged in, the spawn works without any env var. If it's NOT
+  // logged in, the spawn fails with a meaningful error and the case
+  // surfaces a real failure (which is what we WANT — silent skips hide
+  // the "did anyone test this agent?" question).
+  //
+  // Drivers still forward env keys when present (see each agent's run()).
+  // The runner just no longer pre-gates on them.
+  return { ready: true, reason: null };
 }
 
 async function runPoint(
@@ -296,6 +303,22 @@ async function main(): Promise<void> {
   const providerEnv = loadProviderEnv();
   const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}`;
   const startedAt = new Date().toISOString();
+
+  // Run each driver's optional precheck once. Drivers that report not-
+  // ready get a single line in the output AND all their points fall
+  // through to a clean skip — instead of N copy-paste auth-failure
+  // stack traces. Drivers without a precheck (or that return ready)
+  // proceed normally.
+  const notReadyAgents = new Map<string, string>();
+  for (const d of drivers) {
+    if (!d.precheck) continue;
+    const r = await d.precheck();
+    if (!r.ready) {
+      notReadyAgents.set(d.id, r.reason);
+      console.log(`  precheck ${d.id}: not ready — ${r.reason}`);
+    }
+  }
+
   console.log(
     `▶ run ${runId}: ${matrix.length} points across ${drivers.length} agents × ${cases.length} cases\n` +
     `  workspace ${creds.workspaceId} (org ${creds.orgName ?? creds.orgId})`,
@@ -305,6 +328,24 @@ async function main(): Promise<void> {
   for (const point of matrix) {
     const label = `${point.case.id} × ${point.agent.id}`;
     process.stdout.write(`  ${label}... `);
+    // Honor the precheck verdict: if the agent's precheck reported
+    // not-ready, every one of its points is a clean skip — no spawn,
+    // no DB churn, one descriptive reason line in the summary.
+    const notReadyReason = notReadyAgents.get(point.agent.id);
+    if (notReadyReason && !point.skipped) {
+      const r: MatrixResult = {
+        case: point.case.id,
+        agent: point.agent.id,
+        passed: true,
+        failure: `[skip] ${notReadyReason}`,
+        costCents: null,
+        durationMs: 0,
+        sessionId: "",
+      };
+      results.push(r);
+      console.log(`skip — ${notReadyReason}`);
+      continue;
+    }
     const r = await runPoint(point, creds, providerEnv, repoRoot, runId, args.keepSandbox);
     results.push(r);
     if (r.failure?.startsWith("[skip]")) {

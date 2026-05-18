@@ -14,7 +14,23 @@ import { installOrThrow } from "./install-via-cli.js";
 
 export const piDriver: AgentDriver = {
   id: "pi",
-  providerKey: "GOOGLE_API_KEY",
+  // Provider key field is descriptive: pi can use whatever provider its
+  // env supports. We route through OpenRouter when OPENROUTER_API_KEY is
+  // set — one key unlocks many models without per-provider account setup.
+  providerKey: null,
+  async precheck() {
+    // Pi via openrouter needs OPENROUTER_API_KEY. The CLI itself exits
+    // with "No API key found for openrouter" if missing; the precheck
+    // mirrors that check pre-spawn so the matrix doesn't waste a slot
+    // discovering it case-by-case.
+    if (!process.env.OPENROUTER_API_KEY) {
+      return {
+        ready: false as const,
+        reason: "OPENROUTER_API_KEY not set — pi driver routes through OpenRouter (one key, many models)",
+      };
+    }
+    return { ready: true } as const;
+  },
   async install(home, repoRoot) {
     await installOrThrow("pi", home, repoRoot);
   },
@@ -24,14 +40,15 @@ export const piDriver: AgentDriver = {
       HOME: opts.home,
       HIVEMIND_DEBUG: "1",
     };
-    if (opts.providerEnv.GOOGLE_API_KEY) {
-      env.GOOGLE_API_KEY = opts.providerEnv.GOOGLE_API_KEY;
-      env.GEMINI_API_KEY = opts.providerEnv.GOOGLE_API_KEY;
+    if (process.env.OPENROUTER_API_KEY) {
+      env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
     }
     const args = [
       "--print",
-      "--provider", "google",
-      "--model", "gemini-2.5-flash",
+      "--provider", "openrouter",
+      // anthropic/claude-haiku-4-5 is a cheap universal model on OpenRouter.
+      // Switching to another provider's model is a one-line driver edit.
+      "--model", "anthropic/claude-haiku-4-5",
       prompt,
     ];
     return runProcess("pi", args, env, opts.timeoutMs ?? 90_000, opts.sessionId);

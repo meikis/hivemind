@@ -25,15 +25,17 @@ const catIndexMdCase: E2ECase = {
     "Run exactly this bash command and show me its full output, then say 'done':\n" +
     "cat ~/.deeplake/memory/index.md",
   assertions: [
-    {
-      type: "hook-log-contains",
-      substring: "direct read: /index.md",
-      label: "pre-tool-use intercepted /index.md",
-    },
+    // The agent's stdout is the real signal: did the virtual mount
+    // synthesize the index and return it through the intercept, vs the
+    // bash command falling through to a real-FS ENOENT? Pre-tool-use's
+    // own log line for this path isn't a reliable marker — the bash-
+    // command-compiler returns the synthesized content WITHOUT logging
+    // a "direct read" line for the cat-single-file case, so anchoring
+    // on the log substring fails even when the intercept worked.
     {
       type: "stdout-matches",
       regex: /Last Updated|Created|Project|Description/,
-      label: "agent saw the virtual index's table headers",
+      label: "agent saw the virtual index's table headers (intercept fired and returned synthesized index)",
     },
   ],
   // OpenClaw doesn't shell out to bash — its agent's read path is the

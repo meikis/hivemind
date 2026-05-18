@@ -18,10 +18,34 @@
  * may pass `keepSandbox: true` to leave it on disk for debugging.
  */
 
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join, dirname } from "node:path";
 import type { AgentId, TestCredentials } from "./types.js";
+
+/**
+ * Per-agent auth files the agent CLI reads from $HOME. When the harness
+ * overrides HOME for sandbox isolation, the agent loses access to its
+ * own auth (logged-in OAuth token, model API key, etc.) and exits 1 with
+ * an unhelpful empty stderr.
+ *
+ * We copy these files into the tmp HOME at sandbox creation so the agent
+ * authenticates against its real provider while hivemind's writes still
+ * route to ~/.deeplake/credentials.json (which we DID isolate — the test
+ * workspace creds, not the operator's real ones).
+ *
+ * Discovery via `find ~/<agent-home> -name "*credentials*" -o -name "*auth*" -o -name "*config.json"`
+ * on a real logged-in dev box. Per-agent path lists are minimal — extra
+ * files are skipped by the existsSync check at copy time.
+ */
+const AGENT_AUTH_FILES: Record<AgentId, string[]> = {
+  "claude-code":  [".claude/.credentials.json", ".claude/config.json"],
+  "codex":        [".codex/auth.json"],
+  "cursor-agent": [".cursor/cli-config.json"],
+  "hermes":       [".hermes/auth.json"],
+  "pi":           [".pi/agent/auth.json"],
+  "openclaw":     [], // openclaw driver fires plugin events directly, no agent CLI auth needed
+};
 
 export interface Sandbox {
   home: string;
@@ -57,6 +81,21 @@ export function createSandbox(agent: AgentId, creds: TestCredentials): Sandbox {
     JSON.stringify(payload, null, 2),
     { mode: 0o600 },
   );
+
+  // Copy the agent's own auth files so it can reach its model provider
+  // when spawned under the tmp HOME. Without these, claude-code et al
+  // would lose their OAuth/SSO token and exit 1 silently. We copy only
+  // the agent's OWN auth files, NOT hivemind state — credentials for
+  // Deeplake remain isolated to the test workspace above.
+  const realHome = homedir();
+  for (const relPath of AGENT_AUTH_FILES[agent]) {
+    const src = join(realHome, relPath);
+    if (!existsSync(src)) continue; // agent not logged in on this machine; spawn will fail with a clear error
+    const dst = join(home, relPath);
+    mkdirSync(dirname(dst), { recursive: true, mode: 0o700 });
+    copyFileSync(src, dst);
+  }
+
   return {
     home,
     destroy: () => {

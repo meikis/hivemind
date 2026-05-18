@@ -37,11 +37,33 @@ const invalidIdentifierRejectionCase: E2ECase = {
   prompt:
     `Reply with the single word ${JSON.stringify(SENTINEL)} once and stop. Do not call tools.`,
   async setup(ctx) {
+    // Belt-and-suspenders: drop any leftover bad-named table from a
+    // PRIOR run before we set the env var. If a prior run's agent
+    // didn't actually guard against the bad name (or the test rig was
+    // running an older version that did create it), the table can
+    // linger in the workspace and make this run's "did the table get
+    // created?" assertion fire a false positive forever after.
+    //
+    // We use DROP TABLE IF EXISTS with the quoted bad name. This is
+    // SAFE — we're scoping to the literal name we control. The
+    // bad-name-with-dashes name itself is a valid SQL identifier when
+    // quoted; sqlIdent's job is to reject it as a tabularname when it
+    // arrives via env-var interpolation, not to reject all quoting.
+    const api = new DeeplakeApi(
+      ctx.creds.token,
+      ctx.creds.apiUrl,
+      ctx.creds.orgId,
+      ctx.creds.workspaceId,
+      ctx.creds.sessionsTable,
+    );
+    try {
+      await api.query(`DROP TABLE IF EXISTS "${BAD_TABLE_NAME}"`);
+    } catch { /* best-effort; assertion handles the case where it still exists */ }
+
     // Pre-spawn: set the bad identifier in this process's env so
     // openclaw's in-process driver picks it up, AND the spawn path
     // of the CLI drivers forwards it via process.env in their env: {}.
     process.env.HIVEMIND_SESSIONS_TABLE = BAD_TABLE_NAME;
-    void ctx; // tmp HOME and creds already set up by the runner
   },
   assertions: [
     {

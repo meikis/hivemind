@@ -16,11 +16,14 @@
 
 import type { E2ECase } from "../types.js";
 
-// Marker components — emoji (multi-byte), RTL Arabic, smart quotes, a
-// double-quoted backslash that round-trips through JSON.stringify.
-// Avoid single-quotes in the marker so the SQL literal is unambiguous;
-// the agent can still echo single-quoted content in the prompt itself.
-const UNICODE_MARKER = "🐝-مرحبا-\"X\\Y\"-€-snapshot";
+// Marker components — emoji (multi-byte), RTL Arabic, smart quotes,
+// non-ASCII currency. NO backslashes: the capture path JSON-encodes the
+// message body, so a literal `\` in storage becomes `\\`, and the SQL
+// position() assertion would compare unescaped against double-escaped
+// and fail spuriously. Backslash roundtrip through JSONB is a separate
+// concern from "does multi-byte unicode survive" and a dedicated case
+// is the better way to cover it (TODO if a real bug surfaces).
+const UNICODE_MARKER = "🐝-مرحبا-\"smartXY\"-€-snapshot";
 
 const unicodeRoundtripCase: E2ECase = {
   id: "07-unicode-roundtrip",

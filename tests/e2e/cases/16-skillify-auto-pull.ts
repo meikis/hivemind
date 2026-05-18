@@ -28,6 +28,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { DeeplakeApi } from "../../../src/deeplake-api.js";
+import { createSkillsTableSql } from "../../../src/skillify/skills-table.js";
 import type { E2ECase } from "../types.js";
 
 const SKILL_NAME = "e2e-autopull-seeded-skill";
@@ -52,6 +53,14 @@ const skillifyAutoPullCase: E2ECase = {
       ctx.creds.workspaceId,
       "skills", // seed into the canonical name; worker reads here
     );
+    // Ensure-create the skills table — a fresh e2e workspace won't have
+    // it. createSkillsTableSql is idempotent (CREATE TABLE IF NOT EXISTS).
+    try {
+      await api.query(createSkillsTableSql("skills"));
+    } catch {
+      // Best-effort; if the table already exists or there's a benign
+      // race, the seed INSERT below will still succeed or fail cleanly.
+    }
     const now = new Date().toISOString();
     // INSERT shape mirrors src/skillify/skills-table.ts insertSkillRow.
     // project_key embeds the runId so multiple concurrent runs don't see
@@ -77,25 +86,26 @@ const skillifyAutoPullCase: E2ECase = {
     },
     {
       type: "custom",
-      label: "SKILL.md landed at ~/.claude/skills/<name>/ after session-start auto-pull",
+      label: "SKILL.md landed under ~/.claude/skills/ after session-start auto-pull",
       check: async ({ ctx }) => {
-        // Multiple possible install layouts per scope/install pair:
-        //   - project install: <cwd>/.claude/skills/<name>/SKILL.md
-        //   - global install:  <home>/.claude/skills/<name>/SKILL.md
-        // The seed picks install=global, so we look under home.
-        const candidates = [
-          join(ctx.home, ".claude", "skills", SKILL_NAME, "SKILL.md"),
-          join(ctx.home, ".claude", "skills", "team", SKILL_NAME, "SKILL.md"),
-        ];
-        const found = candidates.find(existsSync);
-        if (found) return null;
-        // Diagnostic: list what IS under ~/.claude/skills/ to help debug
-        // any future path drift.
+        // The autopull worker writes to <home>/.claude/skills/<name>--<project>/SKILL.md
+        // (verified by the `pulled scanned=1 wrote=1 skipped=0` log and the
+        // resulting filesystem state). The `--<project>` suffix disambiguates
+        // skills with the same name across projects/scopes. Look for a
+        // matching SKILL.md anywhere under the skills root; the exact path
+        // depends on scope/install settings we don't fully control from
+        // the seed row.
         const skillsDir = join(ctx.home, ".claude", "skills");
-        const present = existsSync(skillsDir)
-          ? readdirSync(skillsDir, { recursive: true }).filter((e) => typeof e === "string").join(", ")
-          : "(skills dir missing entirely)";
-        return `SKILL.md not found at any expected path. Checked:\n  ${candidates.join("\n  ")}\nSkills dir contents: ${present}`;
+        if (!existsSync(skillsDir)) {
+          return `${skillsDir} missing — autopull worker didn't write anything`;
+        }
+        const entries = readdirSync(skillsDir, { recursive: true })
+          .filter((e): e is string => typeof e === "string");
+        const matched = entries.filter((e) => e.startsWith(SKILL_NAME) && e.endsWith("SKILL.md"));
+        if (matched.length === 0) {
+          return `no SKILL.md matching ${SKILL_NAME}*/SKILL.md under ${skillsDir}. Found: ${entries.join(", ") || "(empty)"}`;
+        }
+        return null;
       },
     },
   ],

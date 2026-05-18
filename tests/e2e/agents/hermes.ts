@@ -16,7 +16,20 @@ import { installOrThrow } from "./install-via-cli.js";
 
 export const hermesDriver: AgentDriver = {
   id: "hermes",
-  providerKey: "GOOGLE_API_KEY",
+  providerKey: null, // openrouter-routed; see precheck for the actual env requirement
+  async precheck() {
+    // Hermes via openrouter needs OPENROUTER_API_KEY. Hermes's own
+    // RuntimeError-on-missing-provider-key is a multi-line Python
+    // traceback; we mirror the check pre-spawn so the matrix output
+    // stays clean.
+    if (!process.env.OPENROUTER_API_KEY) {
+      return {
+        ready: false as const,
+        reason: "OPENROUTER_API_KEY not set — hermes driver routes through OpenRouter",
+      };
+    }
+    return { ready: true } as const;
+  },
   async install(home, repoRoot) {
     await installOrThrow("hermes", home, repoRoot);
   },
@@ -26,18 +39,14 @@ export const hermesDriver: AgentDriver = {
       HOME: opts.home,
       HIVEMIND_DEBUG: "1",
     };
-    if (opts.providerEnv.GOOGLE_API_KEY) {
-      env.GOOGLE_API_KEY = opts.providerEnv.GOOGLE_API_KEY;
-      // Hermes also reads GEMINI_API_KEY in some versions; forward both
-      // to avoid an "unauthenticated" failure on the version that's
-      // installed on the runner.
-      env.GEMINI_API_KEY = opts.providerEnv.GOOGLE_API_KEY;
+    if (process.env.OPENROUTER_API_KEY) {
+      env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
     }
     const args = [
       "-z",
       prompt,
-      "--provider", "google",
-      "--model", "gemini-2.5-flash",
+      "--provider", "openrouter",
+      "--model", "anthropic/claude-haiku-4-5",
       "--yolo",
     ];
     return runProcess("hermes", args, env, opts.timeoutMs ?? 90_000, opts.sessionId);

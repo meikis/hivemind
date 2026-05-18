@@ -31,8 +31,10 @@ export const codexDriver: AgentDriver = {
     }
     // `codex exec` is the explicit non-interactive subcommand. Without
     // it, codex falls into its interactive TUI and blocks on stdin.
-    // `-m` picks the model; we use gpt-5-mini as the cheap default.
-    const args = ["exec", "-m", "gpt-5-mini", prompt];
+    // `-m` picks the model: gpt-5-codex-mini is the canonical cheap
+    // option per the project's own checklist; gpt-5-mini is NOT
+    // supported on ChatGPT accounts and errors with 400.
+    const args = ["exec", "-m", "gpt-5-codex-mini", prompt];
     return runProcess("codex", args, env, opts.timeoutMs ?? 90_000, opts.sessionId);
   },
 };
