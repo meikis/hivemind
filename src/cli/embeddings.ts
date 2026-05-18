@@ -134,8 +134,25 @@ function ensureSharedDeps(): void {
   }
 }
 
+export function _linkAgentForTesting(install: AgentInstall): void {
+  return linkAgent(install);
+}
+
 function linkAgent(install: AgentInstall): void {
   const link = join(install.pluginDir, "node_modules");
+  // Don't try to overwrite a real `node_modules` directory: `symlinkForce`
+  // calls `unlinkSync` first, which throws EISDIR on directories and would
+  // abort `hivemind embeddings install` partway through, leaving some
+  // agents linked and others not. Defer to whatever the user/marketplace
+  // installed there — the same state `status` already surfaces as
+  // `owns-own-node-modules`. (Symlinks at this path, including stale ones
+  // pointing at a defunct shared-deps target, still go through
+  // `symlinkForce` so we replace them with the canonical target.)
+  const state = linkStateFor(install);
+  if (state.kind === "owns-own-node-modules") {
+    warn(`  Embeddings     ${install.id.padEnd(20)} owns its own node_modules — skipping symlink (status: owns-own-node-modules)`);
+    return;
+  }
   symlinkForce(SHARED_NODE_MODULES, link);
   log(`  Embeddings     linked ${install.id.padEnd(20)} -> shared deps`);
 }

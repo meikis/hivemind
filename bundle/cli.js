@@ -3773,6 +3773,11 @@ function ensureSharedDeps() {
 }
 function linkAgent(install) {
   const link = join11(install.pluginDir, "node_modules");
+  const state = linkStateFor(install);
+  if (state.kind === "owns-own-node-modules") {
+    warn(`  Embeddings     ${install.id.padEnd(20)} owns its own node_modules \u2014 skipping symlink (status: owns-own-node-modules)`);
+    return;
+  }
   symlinkForce(SHARED_NODE_MODULES, link);
   log(`  Embeddings     linked ${install.id.padEnd(20)} -> shared deps`);
 }

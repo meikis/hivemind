@@ -14,6 +14,7 @@ import {
   SHARED_NODE_MODULES,
   TRANSFORMERS_PKG,
   uninstallEmbeddings,
+  _linkAgentForTesting,
 } from "../../src/cli/embeddings.js";
 import { _resetUserConfigForTesting, _setConfigPathForTesting, getEmbeddingsEnabled } from "../../src/user-config.js";
 
@@ -208,6 +209,55 @@ describe("killEmbedDaemon", () => {
 });
 
 // ── uninstall: writes config:false even when shared deps absent ───────────
+
+describe("linkAgent — preserves real node_modules directory (#1)", () => {
+  // Regression for CodeRabbit #1: previously `linkAgent` went straight
+  // through `symlinkForce` → `unlinkSync` on whatever existed at
+  // `<plugin>/node_modules`. If the path was a real directory (a
+  // marketplace plugin shipping its own deps, or a dev `npm install`),
+  // `unlinkSync` threw EISDIR and aborted `hivemind embeddings install`
+  // partway through, leaving some agents linked and others not.
+  it("skips linking when a real node_modules directory already exists at the link path", () => {
+    const pluginDir = join(tmpHome, ".fake-agent", "hivemind");
+    mkDir(join(pluginDir, "bundle"));
+    // Existing real `node_modules/` dir with content (simulates a
+    // plugin that already shipped deps).
+    const realNm = join(pluginDir, "node_modules");
+    mkDir(realNm);
+    writeFileSync(join(realNm, "marker.txt"), "preserved");
+
+    // Must NOT throw.
+    expect(() =>
+      _linkAgentForTesting({ id: "fake-agent", pluginDir })
+    ).not.toThrow();
+
+    // Real dir is intact, marker file untouched.
+    expect(existsSync(realNm)).toBe(true);
+    expect(lstatSync(realNm).isDirectory()).toBe(true);
+    expect(lstatSync(realNm).isSymbolicLink()).toBe(false);
+    expect(readFileSync(join(realNm, "marker.txt"), "utf-8")).toBe("preserved");
+  });
+
+  it("still replaces a stale symlink at the link path (normal install path unaffected)", () => {
+    const pluginDir = join(tmpHome, ".fake-agent2", "hivemind");
+    mkDir(join(pluginDir, "bundle"));
+    // Simulate a shared-deps target so symlinkForce has somewhere to point.
+    const fakeShared = join(tmpHome, ".hivemind", "embed-deps", "node_modules");
+    mkDir(fakeShared);
+    // Pre-existing symlink to a stale location.
+    const stale = join(tmpHome, "stale");
+    mkDir(stale);
+    symlinkSync(stale, join(pluginDir, "node_modules"));
+
+    // Without HOME override the real SHARED_NODE_MODULES is used, so we
+    // can only assert "no throw" + "still a symlink after". The exact
+    // target depends on the runtime HOME, but the call must succeed.
+    expect(() =>
+      _linkAgentForTesting({ id: "fake-agent2", pluginDir })
+    ).not.toThrow();
+    expect(lstatSync(join(pluginDir, "node_modules")).isSymbolicLink()).toBe(true);
+  });
+});
 
 describe("uninstallEmbeddings — config flag side effect", () => {
   let cfgPath: string;
