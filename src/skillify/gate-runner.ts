@@ -97,10 +97,16 @@ function firstExistingPath(candidates: string[]): string | null {
 export function findAgentBin(agent: Agent): string {
   const home = homedir();
   switch (agent) {
+    // /usr/bin/<name> is included in every candidate list — that's the
+    // common Linux package-manager install path (apt, dnf, pacman). Old
+    // code used `which` which always checked it; the static-scan fix
+    // dropped `which`, so /usr/bin needs to be explicit. CodeRabbit on
+    // #170 caught the gap.
     case "claude_code":
       return firstExistingPath([
         join(home, ".claude", "local", "claude"),
         "/usr/local/bin/claude",
+        "/usr/bin/claude",
         join(home, ".npm-global", "bin", "claude"),
         join(home, ".local", "bin", "claude"),
         "/opt/homebrew/bin/claude",
@@ -108,6 +114,7 @@ export function findAgentBin(agent: Agent): string {
     case "codex":
       return firstExistingPath([
         "/usr/local/bin/codex",
+        "/usr/bin/codex",
         join(home, ".npm-global", "bin", "codex"),
         join(home, ".local", "bin", "codex"),
         "/opt/homebrew/bin/codex",
@@ -115,6 +122,7 @@ export function findAgentBin(agent: Agent): string {
     case "cursor":
       return firstExistingPath([
         "/usr/local/bin/cursor-agent",
+        "/usr/bin/cursor-agent",
         join(home, ".npm-global", "bin", "cursor-agent"),
         join(home, ".local", "bin", "cursor-agent"),
         "/opt/homebrew/bin/cursor-agent",
@@ -123,6 +131,7 @@ export function findAgentBin(agent: Agent): string {
       return firstExistingPath([
         join(home, ".local", "bin", "hermes"),
         "/usr/local/bin/hermes",
+        "/usr/bin/hermes",
         join(home, ".npm-global", "bin", "hermes"),
         "/opt/homebrew/bin/hermes",
       ]) ?? join(home, ".local", "bin", "hermes");
@@ -130,6 +139,7 @@ export function findAgentBin(agent: Agent): string {
       return firstExistingPath([
         join(home, ".local", "bin", "pi"),
         "/usr/local/bin/pi",
+        "/usr/bin/pi",
         join(home, ".npm-global", "bin", "pi"),
         "/opt/homebrew/bin/pi",
       ]) ?? join(home, ".local", "bin", "pi");
