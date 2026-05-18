@@ -94,9 +94,20 @@ export async function insertSkillRow(args: InsertSkillRowArgs): Promise<void> {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     if (isMissingTableError(msg)) {
-      // Lazy-create on first use, then retry the insert once. CREATE TABLE
-      // uses the canonical schema so no extra heal pass is needed.
+      // Lazy-create on first use. Then run a heal pass before retrying:
+      // if another worker raced us and pre-created an older `skills`
+      // table between our INSERT and this CREATE, `CREATE TABLE IF NOT
+      // EXISTS` silently no-op'd against the legacy schema, and the
+      // retry would otherwise fail with the same missing-column error.
+      // healMissingColumns is cheap on a freshly-created table (1
+      // SELECT info_schema, 0 ALTERs).
       await args.query(buildCreateTableSql(args.tableName, SKILLS_COLUMNS));
+      await healMissingColumns({
+        query: args.query,
+        tableName: args.tableName,
+        workspaceId: args.workspaceId,
+        columns: SKILLS_COLUMNS,
+      });
       await args.query(sql);
       return;
     }

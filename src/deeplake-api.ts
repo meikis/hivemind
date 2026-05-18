@@ -394,6 +394,12 @@ export class DeeplakeApi {
 
   /** Create the memory table if it doesn't already exist. Heal missing columns on existing tables. */
   async ensureTable(name?: string): Promise<void> {
+    // Drift guard runs *before* any SQL: ensures fresh tables can't be
+    // created with a MEMORY_COLUMNS that has drifted from
+    // SUMMARY_EMBEDDING_COL (used by the SDK on the write path).
+    if (!MEMORY_COLUMNS.some(c => c.name === SUMMARY_EMBEDDING_COL)) {
+      throw new Error(`MEMORY_COLUMNS missing "${SUMMARY_EMBEDDING_COL}" (embeddings/columns.ts drift)`);
+    }
     // sqlIdent throws on anything outside [A-Za-z_][A-Za-z0-9_]* — protects
     // against HIVEMIND_TABLE config injection (a stray quote would otherwise
     // break CREATE TABLE / ALTER COLUMN / CREATE INDEX startup, and widen the
@@ -405,21 +411,14 @@ export class DeeplakeApi {
       await this.createTableWithRetry(buildCreateTableSql(tbl, MEMORY_COLUMNS), tbl);
       log(`table "${tbl}" created`);
       if (!tables.includes(tbl)) this._tablesCache = [...tables, tbl];
-      // Skip the heal pass on a freshly-created table: CREATE TABLE already
-      // used the canonical column list, so a SELECT info_schema would just
-      // return the same set and trigger zero ALTERs.
-      return;
     }
-    // Pre-existing table — heal anything the schema added since this table
-    // was originally created (e.g. `agent`, `plugin_version`, embedding
-    // columns). One SELECT info_schema, ALTER only the genuinely missing.
+    // Always heal after the create/exists decision. Reason: `listTables()`
+    // is cached, so a stale cache plus a concurrent CREATE from another
+    // writer means `CREATE TABLE IF NOT EXISTS` here can silently no-op
+    // against a legacy table. Running healSchema unconditionally covers
+    // that race; on a genuinely fresh CREATE the SELECT sees the canonical
+    // column set and triggers zero ALTERs (one extra SELECT, ~250ms).
     await this.healSchema(tbl, MEMORY_COLUMNS);
-    // Sanity: the SDK still expects the summary_embedding column name to
-    // match SUMMARY_EMBEDDING_COL — guard against schema drift between this
-    // const and MEMORY_COLUMNS.
-    if (!MEMORY_COLUMNS.some(c => c.name === SUMMARY_EMBEDDING_COL)) {
-      throw new Error(`MEMORY_COLUMNS missing "${SUMMARY_EMBEDDING_COL}" (embeddings/columns.ts drift)`);
-    }
     // BM25 index disabled — CREATE INDEX causes intermittent oid errors on fresh tables.
     // See bm25-oid-bug.sh for reproduction. Re-enable once Deeplake fixes the oid invalidation.
   }
@@ -436,9 +435,10 @@ export class DeeplakeApi {
       await this.createTableWithRetry(buildCreateTableSql(safe, SESSIONS_COLUMNS), safe);
       log(`table "${safe}" created`);
       if (!tables.includes(safe)) this._tablesCache = [...tables, safe];
-    } else {
-      await this.healSchema(safe, SESSIONS_COLUMNS);
     }
+    // Always heal — covers the stale-listTables race the same way as
+    // ensureTable. Cheap when the table was genuinely fresh.
+    await this.healSchema(safe, SESSIONS_COLUMNS);
     await this.ensureLookupIndex(safe, "path_creation_date", `("path", "creation_date")`);
   }
 
@@ -464,9 +464,9 @@ export class DeeplakeApi {
       await this.createTableWithRetry(buildCreateTableSql(safe, SKILLS_COLUMNS), safe);
       log(`table "${safe}" created`);
       if (!tables.includes(safe)) this._tablesCache = [...tables, safe];
-    } else {
-      await this.healSchema(safe, SKILLS_COLUMNS);
     }
+    // Always heal — same rationale as ensureTable / ensureSessionsTable.
+    await this.healSchema(safe, SKILLS_COLUMNS);
     await this.ensureLookupIndex(safe, "project_key_name", `("project_key", "name")`);
   }
 }

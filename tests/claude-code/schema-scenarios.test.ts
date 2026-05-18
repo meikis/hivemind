@@ -110,11 +110,17 @@ afterAll(() => {
 // ── Scenarios 1..7 ──────────────────────────────────────────────────────────
 
 describe("scenario 1 — GREENFIELD (memory missing, sessions missing)", () => {
-  it("CREATEs both tables embedding-ready; no info_schema SELECT, no ALTER", async () => {
+  it("CREATEs both tables embedding-ready; post-CREATE heal SELECT confirms canonical schema, no ALTER", async () => {
+    // Post-CREATE heal is mandatory (covers the cached-listTables race
+    // where a concurrent writer pre-created a legacy table). On a
+    // genuinely fresh CREATE, the SELECT sees the canonical column set
+    // and triggers zero ALTERs.
     const { api, queryCalls } = makeApi(
       [
         { match: CREATE_MEM,    result: "ok" },
+        { match: SCHEMA_MEM,    result: presentRows(ALL_MEM_COLS) },
         { match: CREATE_SESS,   result: "ok" },
+        { match: SCHEMA_SESS,   result: presentRows(ALL_SESS_COLS) },
         { match: CREATE_INDEX,  result: "ok" },
       ],
       [],
@@ -123,13 +129,13 @@ describe("scenario 1 — GREENFIELD (memory missing, sessions missing)", () => {
     await api.ensureTable();
     await api.ensureSessionsTable("sessions");
 
-    // CREATE_MEM + CREATE_SESS + CREATE_INDEX — fresh tables skip the heal pass.
-    expect(queryCalls).toHaveLength(3);
+    expect(queryCalls).toHaveLength(5);
     expect(queryCalls[0]).toMatch(CREATE_MEM);
-    expect(queryCalls[1]).toMatch(CREATE_SESS);
-    expect(queryCalls[2]).toMatch(CREATE_INDEX);
+    expect(queryCalls[1]).toMatch(SCHEMA_MEM);
+    expect(queryCalls[2]).toMatch(CREATE_SESS);
+    expect(queryCalls[3]).toMatch(SCHEMA_SESS);
+    expect(queryCalls[4]).toMatch(CREATE_INDEX);
     expect(queryCalls.some(s => /^ALTER TABLE/.test(s))).toBe(false);
-    expect(queryCalls.some(s => SCHEMA_MEM.test(s) || SCHEMA_SESS.test(s))).toBe(false);
   });
 });
 
@@ -162,7 +168,7 @@ describe("scenario 2 — FULL LEGACY (memory no-emb, sessions no-emb)", () => {
 });
 
 describe("scenario 3 — HALF LEGACY MEMORY (memory no-emb, sessions missing)", () => {
-  it("SELECT memory → ALTER memory; sessions CREATEd embedding-ready (no heal)", async () => {
+  it("SELECT memory → ALTER memory; sessions CREATEd then heal SELECT (canonical schema, no ALTER)", async () => {
     const { api, queryCalls } = makeApi(
       [
         { match: SCHEMA_MEM,    result: presentRows(LEGACY_MEM_COLS) },
@@ -170,6 +176,7 @@ describe("scenario 3 — HALF LEGACY MEMORY (memory no-emb, sessions missing)", 
         { match: ALTER_MEM_AGENT, result: "ok" },
         { match: ALTER_MEM_PV,    result: "ok" },
         { match: CREATE_SESS,   result: "ok" },
+        { match: SCHEMA_SESS,   result: presentRows(ALL_SESS_COLS) },
         { match: CREATE_INDEX,  result: "ok" },
       ],
       ["memory"],
@@ -178,18 +185,19 @@ describe("scenario 3 — HALF LEGACY MEMORY (memory no-emb, sessions missing)", 
     await api.ensureTable();
     await api.ensureSessionsTable("sessions");
 
-    // SELECT_MEM + 3 ALTER_MEM + CREATE_SESS + CREATE_INDEX = 6
-    expect(queryCalls).toHaveLength(6);
-    expect(queryCalls.some(s => SCHEMA_SESS.test(s))).toBe(false); // CREATE → no heal
-    expect(queryCalls.filter(s => /^ALTER TABLE/.test(s))).toHaveLength(3);
+    // SELECT_MEM + 3 ALTER_MEM + CREATE_SESS + SCHEMA_SESS + CREATE_INDEX = 7
+    expect(queryCalls).toHaveLength(7);
+    expect(queryCalls.filter(s => /^ALTER TABLE "sessions"/.test(s))).toHaveLength(0);
+    expect(queryCalls.filter(s => /^ALTER TABLE "memory"/.test(s))).toHaveLength(3);
   });
 });
 
 describe("scenario 4 — HALF LEGACY SESSIONS (memory missing, sessions no-emb)", () => {
-  it("memory CREATEd embedding-ready (no heal); SELECT sessions → ALTER sessions", async () => {
+  it("memory CREATEd then heal SELECT (no ALTER); sessions SELECT misses → ALTER sessions", async () => {
     const { api, queryCalls } = makeApi(
       [
         { match: CREATE_MEM,    result: "ok" },
+        { match: SCHEMA_MEM,    result: presentRows(ALL_MEM_COLS) },
         { match: SCHEMA_SESS,   result: presentRows(LEGACY_SESS_COLS) },
         { match: ALTER_SESS_EMB,   result: "ok" },
         { match: ALTER_SESS_AGENT, result: "ok" },
@@ -202,9 +210,9 @@ describe("scenario 4 — HALF LEGACY SESSIONS (memory missing, sessions no-emb)"
     await api.ensureTable();
     await api.ensureSessionsTable("sessions");
 
-    expect(queryCalls).toHaveLength(6);
-    expect(queryCalls.some(s => SCHEMA_MEM.test(s))).toBe(false);
-    expect(queryCalls.filter(s => /^ALTER TABLE/.test(s))).toHaveLength(3);
+    expect(queryCalls).toHaveLength(7);
+    expect(queryCalls.filter(s => /^ALTER TABLE "memory"/.test(s))).toHaveLength(0);
+    expect(queryCalls.filter(s => /^ALTER TABLE "sessions"/.test(s))).toHaveLength(3);
   });
 });
 

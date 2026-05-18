@@ -409,23 +409,28 @@ const allOf = (cols: readonly { name: string }[]) => cols.map(c => c.name);
 // ── ensureTable ─────────────────────────────────────────────────────────────
 
 describe("DeeplakeApi.ensureTable", () => {
-  it("creates table when it does not exist, no heal pass needed (CREATE uses canonical schema)", async () => {
-    // listTables: empty → CREATE TABLE
+  it("creates table when it does not exist, then runs an unconditional heal pass (covers stale-listTables race)", async () => {
+    // listTables: empty → CREATE TABLE → heal pass (SELECT info_schema)
+    // The post-CREATE heal pass is mandatory even on a fresh table:
+    // `listTables()` is cached, so a concurrent writer may have created
+    // an older table just before our CREATE no-op'd. SELECT sees the
+    // canonical schema we created → 0 ALTERs.
     mockFetch.mockResolvedValueOnce({
       ok: true, status: 200,
       json: async () => ({ tables: [] }),
     });
-    mockFetch.mockResolvedValueOnce(jsonResponse({})); // CREATE TABLE
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                            // CREATE TABLE
+    mockFetch.mockResolvedValueOnce(infoSchemaResponse(allOf(MEMORY_COLUMNS)));    // heal SELECT
     const api = makeApi("my_table");
     await api.ensureTable();
-    // Just listTables + CREATE — no info_schema introspection on a freshly
-    // created table because the CREATE used the canonical column list.
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
     const createSql = JSON.parse(mockFetch.mock.calls[1][1].body).query;
     expect(createSql).toContain(`CREATE TABLE IF NOT EXISTS "my_table"`);
     expect(createSql).toContain("USING deeplake");
     expect(createSql).toContain("summary_embedding FLOAT4[]");
     expect(createSql).toContain("plugin_version TEXT NOT NULL DEFAULT ''");
+    const allSql = mockFetch.mock.calls.filter(c => c[1]?.body).map(c => JSON.parse(c[1].body).query).join(" | ");
+    expect(allSql).not.toContain("ALTER TABLE");
   });
 
   it("on existing table: ONE SELECT info_schema, then ALTER only the genuinely missing columns", async () => {
@@ -527,11 +532,33 @@ describe("DeeplakeApi.ensureTable", () => {
       ok: true, status: 200,
       json: async () => ({ tables: [] }),
     });
-    mockFetch.mockResolvedValueOnce(jsonResponse({}));
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                            // CREATE TABLE
+    mockFetch.mockResolvedValueOnce(infoSchemaResponse(allOf(MEMORY_COLUMNS)));    // post-CREATE heal SELECT
     const api = makeApi("default_table");
     await api.ensureTable("custom_table");
     const createSql = JSON.parse(mockFetch.mock.calls[1][1].body).query;
     expect(createSql).toContain(`CREATE TABLE IF NOT EXISTS "custom_table"`);
+  });
+
+  it("heals after CREATE: race-detected legacy table gets ALTERed before returning", async () => {
+    // Regression for the CodeRabbit-flagged race: listTables() reports
+    // the table missing (cache stale), we run CREATE TABLE IF NOT EXISTS
+    // (no-op against a concurrent writer's older table), and the
+    // unconditional heal pass discovers + repairs the legacy schema.
+    mockFetch.mockResolvedValueOnce({
+      ok: true, status: 200,
+      json: async () => ({ tables: [] }),
+    });
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                                // CREATE (no-op)
+    // Heal SELECT returns the *legacy* shape (missing summary_embedding)
+    const legacy = allOf(MEMORY_COLUMNS).filter(c => c !== "summary_embedding");
+    mockFetch.mockResolvedValueOnce(infoSchemaResponse(legacy));
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                                // ALTER
+    const api = makeApi("my_table");
+    await api.ensureTable();
+    expect(mockFetch).toHaveBeenCalledTimes(4);
+    const alterSql = JSON.parse(mockFetch.mock.calls[3][1].body).query;
+    expect(alterSql).toBe(`ALTER TABLE "my_table" ADD COLUMN summary_embedding FLOAT4[]`);
   });
 
   it("reuses cached listTables across ensureTable and ensureSessionsTable; each gets its own SELECT info_schema", async () => {
@@ -539,19 +566,21 @@ describe("DeeplakeApi.ensureTable", () => {
       ok: true, status: 200,
       json: async () => ({ tables: [{ table_name: "memory" }] }),
     });
-    mockFetch.mockResolvedValueOnce(infoSchemaResponse(allOf(MEMORY_COLUMNS))); // memory: all present
-    mockFetch.mockResolvedValueOnce(jsonResponse({})); // CREATE sessions
-    mockFetch.mockResolvedValueOnce(jsonResponse({})); // CREATE INDEX
+    mockFetch.mockResolvedValueOnce(infoSchemaResponse(allOf(MEMORY_COLUMNS)));    // memory: all present
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                              // CREATE sessions
+    mockFetch.mockResolvedValueOnce(infoSchemaResponse(allOf(SESSIONS_COLUMNS)));   // post-CREATE heal SELECT for sessions
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                              // CREATE INDEX
     const api = makeApi("memory");
 
     await api.ensureTable();
     await api.ensureSessionsTable("sessions");
 
-    // listTables (cached for the 2nd call) + memory SELECT + sessions CREATE + INDEX
-    expect(mockFetch).toHaveBeenCalledTimes(4);
+    // listTables (cached for the 2nd call) + memory SELECT + sessions CREATE
+    // + sessions heal SELECT + INDEX
+    expect(mockFetch).toHaveBeenCalledTimes(5);
     const sessionsCreate = JSON.parse(mockFetch.mock.calls[2][1].body).query;
     expect(sessionsCreate).toContain(`CREATE TABLE IF NOT EXISTS "sessions"`);
-    const indexSql = JSON.parse(mockFetch.mock.calls[3][1].body).query;
+    const indexSql = JSON.parse(mockFetch.mock.calls[4][1].body).query;
     expect(indexSql).toContain("CREATE INDEX IF NOT EXISTS");
     expect(indexSql).toContain(`"path"`);
     expect(indexSql).toContain(`"creation_date"`);
@@ -561,16 +590,17 @@ describe("DeeplakeApi.ensureTable", () => {
 // ── ensureSessionsTable ─────────────────────────────────────────────────────
 
 describe("DeeplakeApi.ensureSessionsTable", () => {
-  it("creates sessions table when it does not exist (no post-CREATE heal pass)", async () => {
+  it("creates sessions table when it does not exist; heals unconditionally after CREATE", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true, status: 200,
       json: async () => ({ tables: [] }),
     });
-    mockFetch.mockResolvedValueOnce(jsonResponse({})); // CREATE TABLE
-    mockFetch.mockResolvedValueOnce(jsonResponse({})); // CREATE INDEX
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                              // CREATE TABLE
+    mockFetch.mockResolvedValueOnce(infoSchemaResponse(allOf(SESSIONS_COLUMNS)));    // post-CREATE heal SELECT
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                              // CREATE INDEX
     const api = makeApi();
     await api.ensureSessionsTable("sessions");
-    expect(mockFetch).toHaveBeenCalledTimes(3); // listTables + CREATE + CREATE INDEX
+    expect(mockFetch).toHaveBeenCalledTimes(4); // listTables + CREATE + heal SELECT + CREATE INDEX
 
     const createSql = JSON.parse(mockFetch.mock.calls[1][1].body).query;
     expect(createSql).toContain(`CREATE TABLE IF NOT EXISTS "sessions"`);
@@ -579,7 +609,7 @@ describe("DeeplakeApi.ensureSessionsTable", () => {
     expect(createSql).toContain("message_embedding FLOAT4[]");
     expect(createSql).toContain("plugin_version TEXT NOT NULL DEFAULT ''");
 
-    const indexSql = JSON.parse(mockFetch.mock.calls[2][1].body).query;
+    const indexSql = JSON.parse(mockFetch.mock.calls[3][1].body).query;
     expect(indexSql).toContain("CREATE INDEX IF NOT EXISTS");
     expect(indexSql).toContain(`"sessions"`);
     expect(indexSql).toContain(`("path", "creation_date")`);
@@ -656,16 +686,17 @@ describe("DeeplakeApi.ensureSessionsTable", () => {
 // ── ensureSkillsTable ───────────────────────────────────────────────────────
 
 describe("DeeplakeApi.ensureSkillsTable", () => {
-  it("creates skills table when it does not exist (CREATE + CREATE INDEX, no heal pass)", async () => {
+  it("creates skills table when it does not exist; heals unconditionally after CREATE", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true, status: 200,
       json: async () => ({ tables: [] }),
     });
-    mockFetch.mockResolvedValueOnce(jsonResponse({})); // CREATE TABLE
-    mockFetch.mockResolvedValueOnce(jsonResponse({})); // CREATE INDEX
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                            // CREATE TABLE
+    mockFetch.mockResolvedValueOnce(infoSchemaResponse(allOf(SKILLS_COLUMNS)));    // post-CREATE heal SELECT
+    mockFetch.mockResolvedValueOnce(jsonResponse({}));                            // CREATE INDEX
     const api = makeApi();
     await api.ensureSkillsTable("skills");
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
 
     const createSql = JSON.parse(mockFetch.mock.calls[1][1].body).query;
     expect(createSql).toContain(`CREATE TABLE IF NOT EXISTS "skills"`);

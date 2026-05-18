@@ -96,19 +96,50 @@ describe("insertSkillRow", () => {
     expect(calls[0].sql).toContain("'say ''hi'''");
   });
 
-  it("on first INSERT failing because the table is missing, runs CREATE then retries the INSERT", async () => {
+  it("on first INSERT failing because the table is missing: CREATE → heal pass → retry INSERT", async () => {
+    // 4 calls: failed INSERT, CREATE TABLE, SELECT info_schema (heal pass —
+    // covers the race where a concurrent writer pre-created a legacy
+    // table, making our CREATE a no-op), then retried INSERT. The heal
+    // SELECT sees the canonical column set we just created → 0 ALTERs.
+    const everyCol = SKILLS_COLUMNS.map(c => c.name);
     const { calls, query } = spyQuery([
       () => { throw new Error(`Table does not exist: relation "skills" does not exist`); },
+      () => undefined,                   // CREATE TABLE
+      () => infoSchemaRows(everyCol),    // SELECT info_schema — schema complete
     ]);
     await insertSkillRow({ query, ...baseArgs });
 
-    // 3 calls: failed INSERT, CREATE TABLE, retried INSERT
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     expect(calls[0].sql).toMatch(/^INSERT INTO/);
     expect(calls[1].sql).toMatch(/^CREATE TABLE IF NOT EXISTS "skills"/);
-    expect(calls[2].sql).toMatch(/^INSERT INTO/);
+    expect(calls[2].sql).toMatch(/^SELECT column_name FROM information_schema\.columns/);
+    expect(calls[3].sql).toMatch(/^INSERT INTO/);
     // Retry must use the SAME insert text — same uuid is reused, etc.
-    expect(calls[0].sql).toBe(calls[2].sql);
+    expect(calls[0].sql).toBe(calls[3].sql);
+  });
+
+  it("CREATE-then-INSERT race: lazy-create no-ops vs legacy table → heal pass adds the missing column", async () => {
+    // Simulates the race CodeRabbit flagged: between our first failing
+    // INSERT and our CREATE TABLE IF NOT EXISTS, another worker created
+    // a legacy `skills` table without `contributors`. The CREATE
+    // no-ops, the heal pass diffs against SKILLS_COLUMNS, ALTERs the
+    // missing column, then retries the INSERT.
+    const legacy = SKILLS_COLUMNS.map(c => c.name).filter(c => c !== "contributors");
+    const { calls, query } = spyQuery([
+      () => { throw new Error(`Table does not exist: relation "skills" does not exist`); },
+      () => undefined,                  // CREATE TABLE — no-op against legacy
+      () => infoSchemaRows(legacy),     // SELECT info_schema — contributors missing
+    ]);
+    await insertSkillRow({ query, ...baseArgs });
+
+    expect(calls).toHaveLength(5);
+    expect(calls[0].sql).toMatch(/^INSERT INTO/);
+    expect(calls[1].sql).toMatch(/^CREATE TABLE IF NOT EXISTS "skills"/);
+    expect(calls[2].sql).toMatch(/^SELECT column_name FROM information_schema\.columns/);
+    expect(calls[3].sql).toBe(
+      `ALTER TABLE "skills" ADD COLUMN contributors TEXT NOT NULL DEFAULT '[]'`,
+    );
+    expect(calls[4].sql).toBe(calls[0].sql);
   });
 
   it("does NOT lazy-create the table on a generic error (only on missing-table)", async () => {
