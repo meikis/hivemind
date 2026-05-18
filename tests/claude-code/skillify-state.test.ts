@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
@@ -16,12 +16,45 @@ import {
   TRIGGER_THRESHOLD,
 } from "../../src/skillify/state.js";
 
-const STATE_DIR = join(homedir(), ".deeplake", "state", "skillify");
+/**
+ * Redirect state.ts at a throwaway directory via `HIVEMIND_STATE_DIR` so
+ * tests never pollute the developer's real `~/.deeplake/state/skillify`.
+ *
+ * Why this matters: this very test file used to `mkdirSync(path, …)` a
+ * directory at the lock path inside the developer's REAL home (to
+ * exercise the EISDIR branch of `tryAcquireWorkerLock`) and clean it up
+ * with a swallow-error `rmdirSync`. Every test run that got SIGKILL'd or
+ * crashed before `afterEach` left a stale `<key>.lock` directory in
+ * `~/.deeplake/state/skillify/`. 80+ orphans accumulated on dev
+ * machines and bricked every production Stop trigger that happened to
+ * hash to the same key (unlinkSync on a directory throws EISDIR, the
+ * worker silently no-ops). `getStateDir()` honours `HIVEMIND_STATE_DIR`
+ * first, so pointing it at `mkdtempSync()` here keeps the blast radius
+ * inside a self-cleaning tmp dir — even a hard kill only leaves debris
+ * in `/tmp` (the OS reaps it on boot).
+ */
+const PRIOR_STATE_DIR_ENV = process.env.HIVEMIND_STATE_DIR;
+let STATE_DIR: string;
+
+beforeAll(() => {
+  STATE_DIR = mkdtempSync(join(tmpdir(), "skillify-state-test-"));
+  process.env.HIVEMIND_STATE_DIR = STATE_DIR;
+});
+
+afterAll(() => {
+  // Defensive: blow away everything we created, including any
+  // directories that an EISDIR-branch test left behind. `recursive +
+  // force` survives both file and dir entries and silently succeeds if
+  // already missing.
+  try { rmSync(STATE_DIR, { recursive: true, force: true }); } catch { /* best effort */ }
+  if (PRIOR_STATE_DIR_ENV === undefined) delete process.env.HIVEMIND_STATE_DIR;
+  else process.env.HIVEMIND_STATE_DIR = PRIOR_STATE_DIR_ENV;
+});
 
 /**
- * Use a unique cwd per test so the derived project key never collides with
- * other tests or real user state. The state files end up in the real
- * ~/.deeplake/state/skillify dir but with random keys we own and clean up.
+ * Use a unique cwd per test so the derived project key never collides
+ * with other tests. The on-disk artefacts live in the tmp STATE_DIR
+ * above, so leaks between tests (and between dev runs) are confined.
  */
 function freshCwd(): string {
   return `/tmp/skillify-test-${randomUUID()}`;
@@ -32,9 +65,14 @@ let trackedKeys: string[] = [];
 beforeEach(() => { trackedKeys = []; });
 
 afterEach(() => {
+  // Belt-and-braces: explicit cleanup of every file or directory we
+  // recorded plus a sweep of the tmp dir for anything we missed. Using
+  // `rmSync(..., { recursive: true, force: true })` so a test that
+  // creates `<key>.lock` as a directory (the EISDIR-branch fixture
+  // below) cleans up just as cleanly as one that left a regular file.
   for (const key of trackedKeys) {
     for (const ext of [".json", ".lock", ".lock.rmw"]) {
-      try { rmSync(join(STATE_DIR, `${key}${ext}`)); } catch { /* nothing to do */ }
+      try { rmSync(join(STATE_DIR, `${key}${ext}`), { recursive: true, force: true }); } catch { /* nothing to do */ }
     }
   }
 });
@@ -231,21 +269,29 @@ describe("worker lock", () => {
 });
 
 describe("worker lock edge cases", () => {
-  it("treats an unreadable lock file as stale (covers readErr branch)", () => {
+  it("self-heals when the lock path is a stale directory and reacquires", () => {
+    // The pre-fix bug: prior runs of this very test file would leak a
+    // `<key>.lock` directory into the dev's real ~/.deeplake on crash.
+    // Once leaked, every future Stop-trigger silently no-op'd because
+    // `unlinkSync` on a directory throws EISDIR and the worker bailed.
+    // The fix in state.ts catches EISDIR and falls back to `rmSync`
+    // recursive — exercise both halves: the recovery AND the
+    // subsequent re-acquire succeed, leaving a regular file in place.
+    const fs = require("node:fs");
     const cwd = freshCwd();
     const { key } = deriveProjectKey(cwd);
     track(key);
-    // Manually create a directory at the lock path so readFileSync throws
-    // EISDIR — exercises the readErr catch branch.
-    const fs = require("node:fs");
     const path = join(STATE_DIR, `${key}.lock`);
-    try { fs.mkdirSync(path, { recursive: true }); } catch { /* may already exist */ }
-    // Now tryAcquireWorkerLock will hit readErr (EISDIR), then unlinkSync
-    // also fails (EISDIR for unlink on a dir → returns false).
+    fs.mkdirSync(path, { recursive: true });
+    expect(fs.statSync(path).isDirectory()).toBe(true);
+
     const ok = tryAcquireWorkerLock(key);
-    expect(ok).toBe(false);
-    // Cleanup
-    try { fs.rmdirSync(path); } catch { /* nothing */ }
+    expect(ok).toBe(true);
+    expect(fs.statSync(path).isFile()).toBe(true);
+    // Sanity: an immediate second acquire is blocked — the new file
+    // really is a live lock, not a leftover artefact.
+    expect(tryAcquireWorkerLock(key)).toBe(false);
+    releaseWorkerLock(key);
   });
 });
 
