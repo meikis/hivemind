@@ -42,7 +42,7 @@
     "audit:openclaw": "node scripts/audit-openclaw-bundle.mjs",
     "pack:check": "node scripts/pack-check.mjs",
     "ci": "npm run typecheck && npm run dup && npm test",
-    "prepare": "husky",
+    "prepare": "husky && npm run build",
     "prepack": "npm run build"
   },
   "lint-staged": {

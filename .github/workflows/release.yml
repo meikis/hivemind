@@ -56,6 +56,13 @@ jobs:
           # what GITHUB_TOKEN pushes back to main; the release commit precedes it.
           if echo "$COMMIT_MSG" | grep -qE "^(chore: untrack bundles|release: v)"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            # CRITICAL: on a re-run after the bump pair already landed, the
+            # event checkout is the STALE pre-bump SHA. Hard-reset to current
+            # origin/main so the unconditional steps below (Extract version,
+            # Check if release exists, Set outputs) read the post-bump state.
+            # Without this, a re-run can hand the publish job a stale SHA →
+            # publishes the wrong commit / wrong version. Caught by codex review.
+            git reset --hard origin/main
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
