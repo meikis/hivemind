@@ -30,6 +30,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "prebuild": "node scripts/sync-versions.mjs",
     "build": "tsc && node esbuild.config.mjs",
     "bundle": "node esbuild.config.mjs",
     "dev": "tsc --watch",
@@ -42,7 +43,7 @@
     "pack:check": "node scripts/pack-check.mjs",
     "ci": "npm run typecheck && npm run dup && npm test",
     "prepare": "husky",
-    "prepublishOnly": "npm run build"
+    "prepack": "npm run build"
   },
   "lint-staged": {
     "*.ts": [

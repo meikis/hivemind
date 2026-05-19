@@ -228,25 +228,44 @@ jobs:
       - name: Build bundles
         run: npm run build
 
-      - name: Verify bundle/ directories are up to date
-        # Regression guard for every shipped bundle, not just claude-code's.
-        # `npm run build` regenerates all of these from src/; if a PR
-        # forgets to commit the regenerated artefact the diff is non-empty
-        # and CI fails. openclaw/dist/ is gitignored (see "Build" step's
-        # comment about ENOENT on a fresh checkout) so it's intentionally
-        # not in this list — the test suite already exercises its content.
+      - name: Smoke-test built bundles parse cleanly
+        # Replaces the prior "Verify bundle/ directories are up to date"
+        # diff guard, which only made sense when bundles were tracked in
+        # git. Now bundles are gitignored on main and live only at release
+        # commits referenced by `marketplace.json`'s sha-pinned source.
+        # Without the diff guard, a build that emits syntactically broken
+        # JS would ship silently — so this step `node --check`s every
+        # bundle entrypoint after `npm run build` runs. --check is a
+        # parse-only validation: catches syntax/parse errors without
+        # executing module top-level code (which would spawn workers,
+        # open file handles, try to write to disk, etc.).
         run: |
-          git diff --exit-code \
-            bundle/ \
-            claude-code/bundle/ \
-            codex/bundle/ \
-            cursor/bundle/ \
-            hermes/bundle/ \
-            mcp/bundle/ \
-            pi/bundle/ || {
-            echo "::error::A bundle directory is out of date. Run 'npm run build' and commit the regenerated files (the diff above shows which bundle drifted)."
-            exit 1
-          }
+          set -e
+          for f in \
+            bundle/cli.js \
+            claude-code/bundle/capture.js \
+            claude-code/bundle/session-start.js \
+            claude-code/bundle/session-end.js \
+            claude-code/bundle/plugin-cache-gc.js \
+            claude-code/bundle/skillify-worker.js \
+            codex/bundle/capture.js \
+            codex/bundle/session-start.js \
+            cursor/bundle/capture.js \
+            cursor/bundle/session-start.js \
+            hermes/bundle/capture.js \
+            hermes/bundle/session-start.js \
+            mcp/bundle/server.js \
+            pi/bundle/skillify-worker.js; do
+            if [ ! -f "$f" ]; then
+              echo "::error::expected bundle entrypoint missing: $f"
+              exit 1
+            fi
+            node --check "$f" || {
+              echo "::error::bundle failed to parse: $f"
+              exit 1
+            }
+          done
+          echo "All bundle entrypoints parse cleanly."
 
       - name: Pack-check (refuse forbidden filenames in tarball)
         # Regression guard: hard-fails CI if a PR widens package.json's

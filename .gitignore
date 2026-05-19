@@ -18,3 +18,15 @@ bun.lock
 deploy-to-cache.sh
 .followups-pr97.md
 .followups-pr98.md
+
+# esbuild outputs — built via `npm run build`, shipped via the npm tarball.
+# Release commits temporarily track them via `git add -f` so the
+# marketplace.json sha-pinned source can resolve to a bundle-containing
+# commit; the very next commit untracks them so main HEAD stays clean.
+bundle/
+claude-code/bundle/
+codex/bundle/
+cursor/bundle/
+hermes/bundle/
+mcp/bundle/
+pi/bundle/

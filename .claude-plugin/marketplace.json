@@ -13,7 +13,12 @@
       "name": "hivemind",
       "description": "Persistent shared memory powered by Deeplake — captures all session activity and provides cross-session, cross-agent memory search",
       "version": "0.7.34",
-      "source": "./claude-code",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/activeloopai/hivemind.git",
+        "path": "claude-code",
+        "sha": "BOOTSTRAP_SHA_PLACEHOLDER"
+      },
       "homepage": "https://github.com/activeloopai/hivemind"
     }
   ]

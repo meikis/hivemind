@@ -26,6 +26,7 @@ export default defineConfig({
       "tests/hermes/**/*.test.ts",
       "tests/openclaw/**/*.test.ts",
       "tests/pi/**/*.test.ts",
+      "tests/scripts/**/*.test.ts",
     ],
     setupFiles: ["./tests/test-setup.ts"],
     environment: "node",
