@@ -26,6 +26,13 @@ export default defineConfig({
       "tests/hermes/**/*.test.ts",
       "tests/openclaw/**/*.test.ts",
       "tests/pi/**/*.test.ts",
+      // Non-agent-specific tests for shared `src/` modules (auth,
+      // deeplake-api, embeddings, grep, notifications, etc.). New
+      // location since PR #183 — the older convention dumps everything
+      // shared into tests/claude-code/, which misleadingly suggests
+      // agent scope. New tests for src/* modules go here; a follow-up
+      // issue tracks the migration of the existing ones.
+      "tests/shared/**/*.test.ts",
     ],
     setupFiles: ["./tests/test-setup.ts"],
     environment: "node",

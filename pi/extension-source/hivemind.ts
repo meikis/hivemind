@@ -325,7 +325,7 @@ async function sendEmbedRequest(sock: ReturnType<typeof connect>, text: string, 
 /**
  * Full spawn-on-miss embedding flow. Returns null on any failure; never
  * throws. 11 edge cases mirror the unit tests in
- * tests/claude-code/standalone-embed-client.test.ts.
+ * tests/shared/standalone-embed-client.test.ts.
  */
 async function tryEmbedOverSocket(text: string, kind: "document" | "query"): Promise<number[] | null> {
   // Case 3 — happy path: socket alive, daemon ready.
