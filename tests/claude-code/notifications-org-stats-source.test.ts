@@ -73,10 +73,11 @@ describe("fetchOrgStats — success path", () => {
     });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
-    // Cache file written.
+    // Cache file written. scopeKey is the JSON-stringified shape from
+    // cacheScopeKey() in the source — includes apiUrl + orgId + userName.
     expect(existsSync(cacheFile)).toBe(true);
     const cached = JSON.parse(readFileSync(cacheFile, "utf-8"));
-    expect(cached.apiUrl).toBe("https://api.example.com");
+    expect(cached.scopeKey).toContain("https://api.example.com");
     expect(cached.data.org.memoryRecallCount).toBe(42000);
   });
 
@@ -120,10 +121,12 @@ describe("fetchOrgStats — failure paths return null (or stale fallback)", () =
   });
 
   it("returns STALE cache value when fetch fails AND a stale cache entry exists", async () => {
-    // Seed a stale cache (older than 1h TTL).
+    // Seed a stale cache (older than 1h TTL). scopeKey uses the cred's
+    // computed shape — see cacheScopeKey() in the source.
+    const scopeKey = JSON.stringify({ apiUrl: "https://api.example.com", orgId: "", userName: "" });
     const stale = {
       fetchedAt: Date.now() - (2 * 60 * 60 * 1000), // 2h ago
-      apiUrl: "https://api.example.com",
+      scopeKey,
       data: {
         org:  { sessionsCount: 5, memoryRecallCount: 6, memorySearchBytes: 7 },
         user: { sessionsCount: 1, memoryRecallCount: 2, memorySearchBytes: 3 },
@@ -139,9 +142,10 @@ describe("fetchOrgStats — failure paths return null (or stale fallback)", () =
 
 describe("fetchOrgStats — cache freshness", () => {
   it("returns cached data without hitting the network if cache age < 1h", async () => {
+    const scopeKey = JSON.stringify({ apiUrl: "https://api.example.com", orgId: "", userName: "" });
     const cached = {
       fetchedAt: Date.now() - (5 * 60 * 1000), // 5m ago
-      apiUrl: "https://api.example.com",
+      scopeKey,
       data: {
         org:  { sessionsCount: 99, memoryRecallCount: 99, memorySearchBytes: 99 },
         user: { sessionsCount: 9,  memoryRecallCount: 9,  memorySearchBytes: 9 },
@@ -149,16 +153,23 @@ describe("fetchOrgStats — cache freshness", () => {
     };
     writeFileSync(cacheFile, JSON.stringify(cached), "utf-8");
 
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    // STUB (not just spy) the fetch — if cache logic regresses, the test
+    // would otherwise call out to real network. mockRejectedValue makes
+    // any accidental call surface as an immediate test failure with a
+    // controlled error rather than a hang or external dependency.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("test should not hit network"),
+    );
     const got = await fetchOrgStats({ token: "t", apiUrl: "https://api.example.com" } as any);
     expect(got).toEqual(cached.data);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("ignores cache when apiUrl differs (user switched between beta/prod creds)", async () => {
+    const scopeKey = JSON.stringify({ apiUrl: "https://api.prod.example.com", orgId: "", userName: "" });
     const cached = {
       fetchedAt: Date.now() - 1000,
-      apiUrl: "https://api.prod.example.com",
+      scopeKey,
       data: {
         org:  { sessionsCount: 99, memoryRecallCount: 99, memorySearchBytes: 99 },
         user: { sessionsCount: 9,  memoryRecallCount: 9,  memorySearchBytes: 9 },
@@ -173,9 +184,58 @@ describe("fetchOrgStats — cache freshness", () => {
       ),
     );
     const got = await fetchOrgStats({ token: "t", apiUrl: "https://api.beta.example.com" } as any);
-    // Fresh fetch wins because apiUrl mismatched.
+    // Fresh fetch wins because scopeKey (which includes apiUrl) mismatched.
     expect(got?.org.sessionsCount).toBe(1);
     expect(got?.user.sessionsCount).toBe(2);
+  });
+
+  it("ignores cache when orgId differs (user ran `hivemind org switch`)", async () => {
+    // Regression for CodeRabbit's "cache identity under-scoped" finding —
+    // before the scopeKey change, cache only checked apiUrl, so an org
+    // switch on the same machine would return stats for the previous org
+    // for up to 1 hour.
+    const scopeKey = JSON.stringify({ apiUrl: "https://api.example.com", orgId: "old-org-uuid", userName: "ada" });
+    const cached = {
+      fetchedAt: Date.now() - 1000,
+      scopeKey,
+      data: {
+        org:  { sessionsCount: 99, memoryRecallCount: 99, memorySearchBytes: 99 },
+        user: { sessionsCount: 9,  memoryRecallCount: 9,  memorySearchBytes: 9 },
+      },
+    };
+    writeFileSync(cacheFile, JSON.stringify(cached), "utf-8");
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ org: { sessions_count: 7 }, user: { sessions_count: 1 } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const got = await fetchOrgStats({
+      token: "t",
+      apiUrl: "https://api.example.com",
+      orgId: "new-org-uuid",
+      userName: "ada",
+    } as any);
+    expect(got?.org.sessionsCount).toBe(7);
+  });
+
+  it("writes fresh fetch result with mkdir (works on first-run with empty ~/.deeplake)", async () => {
+    // Regression for CodeRabbit's "create cache directory before write"
+    // finding. Wipe ~/.deeplake first so writeCache's mkdirSync is on the
+    // critical path; a fresh fetch must then PERSIST to disk.
+    rmSync(join(TEMP_HOME, ".deeplake"), { recursive: true, force: true });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ org: { sessions_count: 11 }, user: { sessions_count: 2 } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const got = await fetchOrgStats({ token: "t", apiUrl: "https://api.example.com" } as any);
+    expect(got?.org.sessionsCount).toBe(11);
+    // Cache file should exist now even though the parent dir was missing
+    // when writeCache was called.
+    expect(existsSync(cacheFile)).toBe(true);
   });
 
   it("_clearCacheForTest empties the cache file (used between test runs)", () => {

@@ -22,9 +22,9 @@
  * timeout is 5s in hooks.json with headroom for state/queue I/O + delivery.
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Credentials } from "../../commands/auth-creds.js";
 import { log as _log } from "../../utils/debug.js";
 
@@ -64,8 +64,24 @@ interface ServerResponse {
 
 interface CacheFileShape {
   fetchedAt: number;
-  apiUrl: string;
+  /**
+   * Cache scope key: stringified `{apiUrl, orgId, userName}`. The request
+   * is scoped by credentials (especially orgId), so caching on apiUrl
+   * alone would return stats for the previous org on the same machine
+   * after `hivemind org switch` — the bug CodeRabbit flagged on PR #174.
+   * The scope key is opaque to the caller; we just check equality.
+   */
+  scopeKey: string;
   data: OrgStats;
+}
+
+/** Cache scope key — see CacheFileShape.scopeKey docstring. */
+function cacheScopeKey(creds: Credentials): string {
+  return JSON.stringify({
+    apiUrl: creds.apiUrl ?? DEFAULT_API_URL,
+    orgId: creds.orgId ?? "",
+    userName: creds.userName ?? "",
+  });
 }
 
 /** Coerce a server-side number that might be missing, null, or non-numeric.
@@ -80,12 +96,12 @@ function scopeFromServer(s: ServerScope | undefined): OrgStatsScope {
   };
 }
 
-function readCache(apiUrl: string): { fresh?: OrgStats; stale?: OrgStats } {
+function readCache(scopeKey: string): { fresh?: OrgStats; stale?: OrgStats } {
   if (!existsSync(cacheFilePath())) return {};
   try {
     const parsed = JSON.parse(readFileSync(cacheFilePath(), "utf-8")) as CacheFileShape;
     if (!parsed || typeof parsed !== "object") return {};
-    if (parsed.apiUrl !== apiUrl) return {};
+    if (parsed.scopeKey !== scopeKey) return {};
     if (typeof parsed.fetchedAt !== "number") return {};
     const age = Date.now() - parsed.fetchedAt;
     const data = parsed.data;
@@ -101,9 +117,15 @@ function readCache(apiUrl: string): { fresh?: OrgStats; stale?: OrgStats } {
   }
 }
 
-function writeCache(apiUrl: string, data: OrgStats): void {
+function writeCache(scopeKey: string, data: OrgStats): void {
   try {
-    const body: CacheFileShape = { fetchedAt: Date.now(), apiUrl, data };
+    // mkdir parent: ~/.deeplake/ may not exist yet on fresh-install
+    // environments (the user logged in, but the SDK hasn't created
+    // anything yet). Without this, writeFileSync ENOENT-throws and the
+    // cache silently never persists — defeating the 1-hour read latency
+    // amortization. Caught by CodeRabbit on PR #174.
+    mkdirSync(dirname(cacheFilePath()), { recursive: true });
+    const body: CacheFileShape = { fetchedAt: Date.now(), scopeKey, data };
     writeFileSync(cacheFilePath(), JSON.stringify(body), "utf-8");
   } catch (e: any) {
     // Don't fail the read path if disk write fails; just log.
@@ -126,7 +148,8 @@ export async function fetchOrgStats(creds: Credentials | null): Promise<OrgStats
   if (!creds?.token) return null;
 
   const apiUrl = creds.apiUrl ?? DEFAULT_API_URL;
-  const { fresh, stale } = readCache(apiUrl);
+  const scopeKey = cacheScopeKey(creds);
+  const { fresh, stale } = readCache(scopeKey);
   if (fresh) {
     log("cache hit — returning fresh org stats");
     return fresh;
@@ -157,7 +180,7 @@ export async function fetchOrgStats(creds: Credentials | null): Promise<OrgStats
       org: scopeFromServer(body.org),
       user: scopeFromServer(body.user),
     };
-    writeCache(apiUrl, data);
+    writeCache(scopeKey, data);
     log(`fetched org stats from ${apiUrl}`);
     return data;
   } catch (e: any) {

@@ -292,15 +292,22 @@ async function fetchBackendNotifications(creds) {
 }
 
 // dist/src/notifications/sources/org-stats.js
-import { existsSync, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync, mkdirSync as mkdirSync4, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
 import { homedir as homedir5 } from "node:os";
-import { join as join5 } from "node:path";
+import { dirname, join as join5 } from "node:path";
 var log5 = (msg) => log("notifications-org-stats", msg);
 var FETCH_TIMEOUT_MS2 = 1500;
 var DEFAULT_API_URL2 = "https://api.deeplake.ai";
 var CACHE_TTL_MS = 60 * 60 * 1e3;
 function cacheFilePath() {
   return join5(homedir5(), ".deeplake", "hivemind-stats-cache.json");
+}
+function cacheScopeKey(creds) {
+  return JSON.stringify({
+    apiUrl: creds.apiUrl ?? DEFAULT_API_URL2,
+    orgId: creds.orgId ?? "",
+    userName: creds.userName ?? ""
+  });
 }
 function scopeFromServer(s) {
   const n = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0;
@@ -310,14 +317,14 @@ function scopeFromServer(s) {
     memorySearchBytes: n(s?.memory_search_bytes)
   };
 }
-function readCache(apiUrl) {
+function readCache(scopeKey) {
   if (!existsSync(cacheFilePath()))
     return {};
   try {
     const parsed = JSON.parse(readFileSync4(cacheFilePath(), "utf-8"));
     if (!parsed || typeof parsed !== "object")
       return {};
-    if (parsed.apiUrl !== apiUrl)
+    if (parsed.scopeKey !== scopeKey)
       return {};
     if (typeof parsed.fetchedAt !== "number")
       return {};
@@ -333,9 +340,10 @@ function readCache(apiUrl) {
     return {};
   }
 }
-function writeCache(apiUrl, data) {
+function writeCache(scopeKey, data) {
   try {
-    const body = { fetchedAt: Date.now(), apiUrl, data };
+    mkdirSync4(dirname(cacheFilePath()), { recursive: true });
+    const body = { fetchedAt: Date.now(), scopeKey, data };
     writeFileSync4(cacheFilePath(), JSON.stringify(body), "utf-8");
   } catch (e) {
     log5(`cache write failed: ${e?.message ?? String(e)}`);
@@ -345,7 +353,8 @@ async function fetchOrgStats(creds) {
   if (!creds?.token)
     return null;
   const apiUrl = creds.apiUrl ?? DEFAULT_API_URL2;
-  const { fresh, stale } = readCache(apiUrl);
+  const scopeKey = cacheScopeKey(creds);
+  const { fresh, stale } = readCache(scopeKey);
   if (fresh) {
     log5("cache hit \u2014 returning fresh org stats");
     return fresh;
@@ -374,7 +383,7 @@ async function fetchOrgStats(creds) {
       org: scopeFromServer(body.org),
       user: scopeFromServer(body.user)
     };
-    writeCache(apiUrl, data);
+    writeCache(scopeKey, data);
     log5(`fetched org stats from ${apiUrl}`);
     return data;
   } catch (e) {
@@ -386,8 +395,8 @@ async function fetchOrgStats(creds) {
 }
 
 // dist/src/notifications/usage-tracker.js
-import { appendFileSync as appendFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync5, readdirSync } from "node:fs";
-import { dirname, join as join6 } from "node:path";
+import { appendFileSync as appendFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync5, readFileSync as readFileSync5, readdirSync } from "node:fs";
+import { dirname as dirname2, join as join6 } from "node:path";
 import { homedir as homedir6 } from "node:os";
 var log6 = (msg) => log("usage-tracker", msg);
 function statsFilePath() {
