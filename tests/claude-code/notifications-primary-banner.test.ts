@@ -119,6 +119,9 @@ describe("pickPrimaryBanner — savings recap (when org savings > 1M)", () => {
     expect(n!.body).toContain("42,000 memory recalls");
     expect(n!.body).toContain("across 187 sessions");
     expect(n!.body).toContain("you contributed");
+    // Regression: the trailing "saved" was awkward — "you contributed ~X saved"
+    // dangled. The body shouldn't end with that word (title already says "saved").
+    expect(n!.body).not.toMatch(/contributed ~\S+ saved\b/);
     expect(n!.dedupKey).toEqual({ session: "s-1" });
   });
 

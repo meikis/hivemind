@@ -54,7 +54,7 @@ const SAVINGS_MULTIPLIER = 1.7;
  *  than just a friendly welcome. */
 const MEANINGFUL_SAVINGS_TOKENS = 1_000_000;
 
-/** Skip the "you contributed ~X saved" segment when the user's own
+/** Skip the "you contributed ~X" segment when the user's own
  *  contribution is below this many bytes — keeps the banner from reading
  *  "you contributed ~0 saved" for org members who haven't used hivemind
  *  themselves yet. 4_000 bytes ≈ 1k tokens with the BPE rule-of-thumb. */
@@ -152,7 +152,7 @@ function renderWelcome(sessionId: string, creds: Credentials): Notification {
 }
 
 /** "🐝 Hivemind has saved your team ~5.2M tokens
- *      42,000 memory recalls · across 187 sessions · you contributed ~140k saved" */
+ *      42,000 memory recalls · across 187 sessions · you contributed ~140k" */
 function renderOnlineSavings(
   sessionId: string,
   s: OrgStats,
@@ -170,7 +170,7 @@ function renderOnlineSavings(
   // tokens — saves the org member who hasn't used hivemind themselves
   // from reading "you contributed ~0 saved" alongside the team total.
   if (s.user.memorySearchBytes >= MIN_USER_BYTES_FOR_CONTRIBUTION_LINE) {
-    segments.push(`you contributed ~${formatTokens(zUser)} saved`);
+    segments.push(`you contributed ~${formatTokens(zUser)}`);
   }
   // Skills the user has generated across all their projects — purely local
   // count. Append when non-zero to keep the cross-machine banner connected
