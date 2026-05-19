@@ -354,10 +354,10 @@ describe("HIVEMIND_STATE_DIR routing", () => {
     // We `vi.resetModules()` before importing so this test truly
     // exercises `migrateLegacyStateDir()` from scratch. Earlier tests
     // in this file call it transitively (via `bumpStopCounter` → ...),
-    // which would otherwise leave the module-level `attemptedFor` Set
-    // already populated with STATE_DIR and short-circuit the function
-    // before any of its body runs — the test would pass trivially
-    // without proving anything about the function's behavior.
+    // which would otherwise leave the module-level `attempted` flag
+    // already set to `true` and short-circuit the function before any
+    // of its body runs — the test would pass trivially without
+    // proving anything about the function's behavior.
     //
     // Two assertions establish the channel is closed:
     //   1) getStateDir() returns the tmp dir, NOT a path under homedir().

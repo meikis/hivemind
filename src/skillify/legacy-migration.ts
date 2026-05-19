@@ -24,9 +24,11 @@
  * accumulated the orphan lock directories the env override is meant to
  * prevent.
  *
- * Re-entrancy: the "already attempted" set is keyed by resolved target
- * dir so a test that runs back-to-back with different `HIVEMIND_STATE_DIR`
- * values doesn't silently skip the migration in the second run.
+ * Re-entrancy: a single `attempted` boolean is enough. The `HIVEMIND_STATE_DIR`
+ * guard at the top of the function makes this an in-process one-shot —
+ * `getStateDir()` always resolves to the same canonical path when the env is
+ * unset, so there's no scenario where the same process would need to migrate
+ * a *different* state dir later in its lifetime.
  *
  * Error policy: swallow the documented fallback codes — `EXDEV`
  * (cross-device link, e.g. `~/.deeplake` on a different mount than `/tmp`),
@@ -46,7 +48,7 @@ import { getStateDir } from "./state-dir.js";
 
 const dlog = (msg: string) => _log("skillify-migrate", msg);
 
-const attemptedFor = new Set<string>();
+let attempted = false;
 
 export function migrateLegacyStateDir(): void {
   // Hard guard: when `HIVEMIND_STATE_DIR` is set we are explicitly NOT
@@ -61,9 +63,9 @@ export function migrateLegacyStateDir(): void {
   // overrides) get a hard no-op here and a clean tmp-dir start.
   if (process.env.HIVEMIND_STATE_DIR?.trim()) return;
 
+  if (attempted) return;
+  attempted = true;
   const current = getStateDir();
-  if (attemptedFor.has(current)) return;
-  attemptedFor.add(current);
   const legacy = join(dirname(current), "skilify");
   if (!existsSync(legacy)) return;
   if (existsSync(current)) return;
