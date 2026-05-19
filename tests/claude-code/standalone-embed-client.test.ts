@@ -229,9 +229,9 @@ describe("tryEmbedStandalone", () => {
     const { pid: pidPath } = pathsFor(dir);
     // Use the test runner's PARENT pid — a real live process that is NOT
     // us. Using our own pid would mask the "other agent owns the pidfile"
-    // semantics: tryEmbedStandalone now cleans up its OWN placeholder on
-    // timeout (codex P1 #2 fix), so writing process.pid here would
-    // legitimately unlink and the test would assert the wrong thing.
+    // semantics: tryEmbedStandalone cleans up its OWN placeholder on
+    // timeout, so writing process.pid here would legitimately unlink and
+    // the test would assert the wrong thing.
     const otherLivePid = process.ppid;
     expect(otherLivePid).toBeGreaterThan(0);
     expect(otherLivePid).not.toBe(process.pid);
@@ -461,10 +461,11 @@ describe("tryEmbedStandalone", () => {
     expect(seen).toEqual(["query"]);
   });
 
-  // Codex P1 #1 — empty pidfile (writer in progress) must NOT be treated
-  // as stale + respawned. Before the fix, the catch-block in
-  // trySpawnDaemon called readPidFile → Number("") === 0 → null → "stale"
-  // → unlink + retry openSync. Two callers could both end up spawning.
+  // Empty-pidfile race: the catch-block in trySpawnDaemon must NOT
+  // treat an empty pidfile as stale. The naive path is readPidFile →
+  // Number("") === 0 → null → "stale" → unlink + retry openSync, which
+  // lets two racing callers both end up spawning a daemon (the second
+  // crashes on bind).
   it("does not respawn when a concurrent caller's pidfile is still empty", async () => {
     const dir = makeTmpDir();
     const { pid: pidPath } = pathsFor(dir);
@@ -490,10 +491,11 @@ describe("tryEmbedStandalone", () => {
     expect(spawnCalls).toBe(0);
   });
 
-  // Codex P1 #2 — if we spawned and the daemon never opened the socket,
-  // our placeholder PID must be cleaned up so a SECOND call can retry the
-  // spawn. Otherwise the next caller sees a live owner (us) and waits
-  // forever, locking the system into "NULL embeddings until process restart".
+  // Placeholder-leak recovery: if we spawned and the daemon never
+  // opened the socket, our placeholder PID must be cleaned up so a
+  // SECOND call can retry the spawn. Otherwise the next caller sees a
+  // live owner (us) and waits forever, locking the system into "NULL
+  // embeddings until process restart".
   it("cleans up its own placeholder PID after spawnWaitMs so a retry can recover", async () => {
     const dir = makeTmpDir();
     const { pid: pidPath } = pathsFor(dir);
@@ -527,8 +529,9 @@ describe("tryEmbedStandalone", () => {
     expect(spawnCalls).toBe(2);
   });
 
-  // Codex residual edge — empty pidfile from a SIGKILL'd previous caller
-  // would otherwise lock the uid into NULL embeddings forever. After the
+  // Stuck-empty-pidfile durability: if a previous caller is SIGKILL'd
+  // between openSync(wx) and writeSync(pid), the empty file persists
+  // and locks the uid into NULL embeddings forever. After the
   // spawnWaitMs timeout (5s — orders of magnitude longer than the
   // legitimate openSync→writeSync gap), cleanup MUST drop the empty
   // file so the next call can recover.
@@ -564,7 +567,8 @@ describe("tryEmbedStandalone", () => {
     expect(spawnCalls).toBe(1);
   });
 
-  // Codex P2 — daemon-side payload is JSON-over-socket; even though our
+  // Payload validation at the socket boundary: daemon-side payload is
+  // JSON-over-socket; even though our
   // TypeScript type is number[], a buggy / older daemon could ship strings,
   // null, NaN, or objects. Those would flow straight into the
   // ARRAY[...]::float4[] SQL literal. Defense at the boundary.

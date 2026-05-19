@@ -95,10 +95,10 @@ function isPidAlive(pid: number): boolean {
  *   - `number`  : a parseable PID (caller checks isPidAlive)
  *   - `"empty"` : file exists but is empty — another caller is mid-write
  *                 between `openSync(wx)` and `writeSync(pid)`. The naive
- *                 "empty → stale → unlink + respawn" path here is what
- *                 codex flagged as P1 in the issue #178 review: two
- *                 racing callers can both end up spawning. Treat empty
- *                 as "owner in progress" and wait.
+ *                 "empty → stale → unlink + respawn" path lets two
+ *                 racing callers both end up spawning a daemon (the
+ *                 second crashes on bind). Treat empty as "owner in
+ *                 progress" and wait instead.
  *   - `null`    : missing, unreadable, or garbage (non-numeric) — safe
  *                 to treat as stale.
  */
@@ -184,12 +184,13 @@ function trySpawnDaemon(daemonEntry: string, pidPath: string): boolean {
     // Pidfile already exists. Three cases:
     //   - "empty"        → another caller won openSync(wx) but hasn't
     //                       written its placeholder PID yet. We MUST
-    //                       NOT unlink + respawn (codex P1 #1 race):
-    //                       returning false here lets the outer caller
-    //                       wait for the winner's socket. If the winner
-    //                       crashed mid-write, the outer waitForSocket
-    //                       times out and pidfile cleanup happens
-    //                       there (see tryEmbedStandalone).
+    //                       NOT unlink + respawn — that lets two
+    //                       racing callers each spawn a daemon, the
+    //                       second crashing on bind(). Returning false
+    //                       here defers to the (presumed) winner; if
+    //                       it crashed mid-write, the outer
+    //                       waitForSocket times out and cleans the
+    //                       empty pidfile (see tryEmbedStandalone).
     //   - live PID        → another caller is bringing the daemon up.
     //                       Wait, never SIGTERM.
     //   - dead PID / null → genuinely stale, clean + retry once.
@@ -235,19 +236,18 @@ function trySpawnDaemon(daemonEntry: string, pidPath: string): boolean {
  * After waitForSocket times out, the daemon never opened the socket. If
  * we spawned and the pidfile still holds our placeholder PID, future
  * callers would see "live owner" (we're still alive!) and wait forever,
- * never retrying the spawn. Codex P1 #2: clean up our placeholder ONLY
- * if it's still ours — never touch a PID written by the daemon itself
- * (it might be in the middle of binding) or by another caller that
- * raced past us.
+ * never retrying the spawn. Clean up our placeholder ONLY if it's still
+ * ours — never touch a PID written by the daemon itself (it might be in
+ * the middle of binding) or by another caller that raced past us.
  *
  * Also cleans up an empty pidfile. If a previous caller was SIGKILL'd
- * exactly between `openSync(wx)` and `writeSync(pid)` (codex's residual
- * non-blocking edge), the empty file persists and every subsequent
- * caller treats it as "writer in progress" — silent NULL embeddings
- * for that uid forever. By the time we hit this cleanup we've already
- * waited spawnWaitMs (5s), which is many orders of magnitude longer
- * than the legitimate sub-microsecond openSync→writeSync gap, so
- * "empty here" must mean the writer died, not "writer is in progress".
+ * exactly between `openSync(wx)` and `writeSync(pid)`, the empty file
+ * persists and every subsequent caller treats it as "writer in
+ * progress" — silent NULL embeddings for that uid forever. By the time
+ * we hit this cleanup we've already waited spawnWaitMs (5s), many
+ * orders of magnitude longer than the legitimate sub-microsecond
+ * openSync→writeSync gap, so "empty here" means the writer died, not
+ * "writer is in progress".
  */
 function maybeCleanupOwnPlaceholder(pidPath: string): void {
   const existing = readPidFile(pidPath);
@@ -326,7 +326,7 @@ export async function tryEmbedStandalone(
       // Case 9: daemon never came up within the window. If the pidfile
       // still has our placeholder PID, unlink it — otherwise the next
       // caller would treat us as a live owner and wait forever instead
-      // of retrying the spawn (codex P1 #2).
+      // of retrying the spawn.
       maybeCleanupOwnPlaceholder(pidPath);
       return null;
     }
@@ -342,8 +342,8 @@ export async function tryEmbedStandalone(
     }
     // Daemon payload arrives as untrusted JSON. Even though `number[]` is
     // the TypeScript contract, runtime-validate so a buggy/older daemon
-    // can't sneak strings / null / NaN into the SQL literal pipeline
-    // (codex P2). Treat any non-finite element as full failure → NULL.
+    // can't sneak strings / null / NaN into the SQL literal pipeline.
+    // Treat any non-finite element as full failure → NULL.
     for (const v of resp.embedding) {
       if (typeof v !== "number" || !Number.isFinite(v)) return null;
     }

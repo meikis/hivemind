@@ -64,13 +64,13 @@ describe("pi extension — embedding wiring", () => {
     // Allowed: `process.kill(pid, 0)` — liveness probe used inside
     // isPidAlive(). Any OTHER process.kill(...) is forbidden, including
     // the bare `process.kill(pid)` form which Node treats as SIGTERM by
-    // default (codeRabbit hardening, PR #183 review).
+    // default.
     expect(PI_SRC).toMatch(/process\.kill\(\s*pid\s*,\s*0\s*\)/);
     const withoutLivenessProbe = PI_SRC.replace(/process\.kill\(\s*pid\s*,\s*0\s*\)/g, "");
     expect(withoutLivenessProbe).not.toMatch(/process\.kill\(/);
   });
 
-  it("treats an empty pidfile as 'writer in progress' (codex P1 #1)", () => {
+  it("treats an empty pidfile as 'writer in progress' to avoid duplicate spawns", () => {
     // The catch-after-openSync(wx) branch MUST short-circuit on empty
     // pidfile, not unlink + retry. Without this, two pi turns racing
     // openSync(wx) can both end up calling spawn(): caller A wins
@@ -80,7 +80,7 @@ describe("pi extension — embedding wiring", () => {
     expect(PI_SRC).toMatch(/if\s*\(\s*existing\s*===\s*"empty"\s*\)\s*return\s+false/);
   });
 
-  it("cleans up own placeholder PID after spawnWaitMs timeout (codex P1 #2)", () => {
+  it("cleans up own placeholder PID after spawnWaitMs timeout (enables retry)", () => {
     // If trySpawnDaemonInline wrote our placeholder PID and the daemon
     // never opened a socket, the pidfile still holds our PID. Every
     // subsequent pi turn sees "live owner" (we're alive) and waits
@@ -92,7 +92,7 @@ describe("pi extension — embedding wiring", () => {
     expect(PI_SRC).toMatch(/existing\s*===\s*process\.pid/);
   });
 
-  it("validates daemon embedding payload is finite numbers (codex P2)", () => {
+  it("validates daemon embedding payload is finite numbers", () => {
     // JSON from the socket is untrusted at runtime. A misbehaving / older
     // daemon could ship strings or NaN that flow into the ARRAY[...] SQL
     // literal. The inline sendEmbedRequest must reject any non-finite

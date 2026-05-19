@@ -194,9 +194,9 @@ function isPidAlive(pid: number): boolean {
 
 // Three-state read: "empty" means the file exists but hasn't been
 // written yet — another caller is mid-spawn between openSync(wx) and
-// writeFileSync(pid). Treating that as stale is the codex P1 #1 race:
-// both callers end up spawning a daemon, second one crashes on bind.
-// Mirrors src/embeddings/standalone-embed-client.ts:readPidFile.
+// writeSync(pid). Treating that as stale lets two racing callers each
+// spawn a daemon, the second crashing on bind(). Mirrors
+// src/embeddings/standalone-embed-client.ts:readPidFile.
 function readPidFileInline(path: string): number | "empty" | null {
   let raw: string;
   try { raw = readFileSync(path, "utf-8").trim(); } catch { return null; }
@@ -235,7 +235,8 @@ function trySpawnDaemonInline(): boolean {
   } catch {
     const existing = readPidFileInline(EMBED_PID_PATH);
     // Empty file: another caller won openSync(wx) but hasn't written its
-    // PID yet. We MUST NOT unlink + respawn (codex P1 #1). Wait.
+    // PID yet. We MUST NOT unlink + respawn — that lets us race past
+    // the legitimate writer and spawn a duplicate daemon. Wait instead.
     if (existing === "empty") return false;
     if (existing !== null && isPidAlive(existing)) {
       // Live owner: another agent / pi turn is bringing the daemon up. Wait.
@@ -270,17 +271,17 @@ function trySpawnDaemonInline(): boolean {
   }
 }
 
-// Codex P1 #2 — after a spawnWaitMs timeout with daemon never opening
-// socket, the pidfile still holds OUR placeholder PID. Every subsequent
-// pi turn would see "live owner" (we're still running) and wait forever
-// instead of retrying the spawn. Clean up the placeholder, but only if
-// it's still ours — the daemon may have already overwritten it.
+// After a spawnWaitMs timeout with daemon never opening socket, the
+// pidfile still holds OUR placeholder PID. Every subsequent pi turn
+// would see "live owner" (we're still running) and wait forever instead
+// of retrying the spawn. Clean up the placeholder, but only if it's
+// still ours — the daemon may have already overwritten it.
 //
-// Also clears an empty pidfile (codex's residual edge): if a prior pi
-// turn was SIGKILL'd between openSync(wx) and writeSync(pid), the empty
-// file would persist and every later turn would wait forever. By the
-// time we hit this cleanup we've waited 5s — orders of magnitude longer
-// than the legitimate openSync→writeSync gap.
+// Also clears an empty pidfile: if a prior pi turn was SIGKILL'd
+// between openSync(wx) and writeSync(pid), the empty file would persist
+// and every later turn would wait forever. By the time we hit this
+// cleanup we've waited 5s — orders of magnitude longer than the
+// legitimate openSync→writeSync gap.
 function maybeCleanupOwnPlaceholderInline(): void {
   const existing = readPidFileInline(EMBED_PID_PATH);
   if (existing === process.pid || existing === "empty") {
@@ -303,10 +304,10 @@ async function sendEmbedRequest(sock: ReturnType<typeof connect>, text: string, 
         const resp = JSON.parse(buf.slice(0, nl));
         // Daemon may return `{ error: "unknown op" }` from an older protocol — graceful NULL.
         if (!Array.isArray(resp.embedding)) return settle(null);
-        // Codex P2 — JSON-over-socket is untrusted at runtime. Reject any
-        // non-finite element (string, null, NaN, Infinity, object). Without
-        // this, a misbehaving daemon could ship bad values that flow into
-        // the ARRAY[...]::FLOAT4[] SQL literal.
+        // JSON-over-socket is untrusted at runtime. Reject any non-finite
+        // element (string, null, NaN, Infinity, object). Without this, a
+        // misbehaving daemon could ship bad values that flow into the
+        // ARRAY[...]::FLOAT4[] SQL literal.
         for (const v of resp.embedding) {
           if (typeof v !== "number" || !Number.isFinite(v)) return settle(null);
         }
@@ -348,8 +349,8 @@ async function tryEmbedOverSocket(text: string, kind: "document" | "query"): Pro
       if (sock) break;
     }
     if (!sock) {
-      // Codex P1 #2 — clean up our placeholder PID so the next pi turn
-      // can retry the spawn instead of waiting on us forever.
+      // Clean up our placeholder PID so the next pi turn can retry the
+      // spawn instead of waiting on us forever.
       maybeCleanupOwnPlaceholderInline();
       logHm(`embed: daemon never opened socket within 5s`);
       return null;
