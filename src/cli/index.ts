@@ -15,6 +15,7 @@ import { ensureLoggedIn, isLoggedIn, loginWithProvidedToken, maybeShowOrgChoice 
 import { runAuthCommand } from "../commands/auth-login.js";
 import { runSkillifyCommand } from "../commands/skillify.js";
 import { runRulesCommand } from "../commands/rules.js";
+import { runTasksCommand } from "../commands/tasks.js";
 import { confirm, detectPlatforms, allPlatformIds, log, promptLine, warn, type PlatformId } from "./util.js";
 import { getVersion } from "./version.js";
 import { runUpdate } from "./update.js";
@@ -102,6 +103,18 @@ Team-wide rules (SessionStart injection wired in a follow-up):
   hivemind rules done <rule-id>                Mark a rule done.
   Note: today rules are persisted only. Per-agent SessionStart injection
   lands in a follow-up commit (T6 of the rules-and-tasks-kpis plan).
+
+Personal + team tasks (SessionStart injection + KPI gen in follow-ups):
+  hivemind tasks add "<text>" [--scope me|team] [--assign <user_email>]
+                                               Add a task (default --scope me, self-assigned).
+  hivemind tasks list [--mine|--team|--all] [--status active|done|all] [--limit N]
+                                               List tasks. Default --mine + active + 10 newest.
+  hivemind tasks edit <task-id> "<new text>"   Edit a task (bumps version).
+  hivemind tasks done <task-id>                Mark a task done.
+  hivemind tasks assign <task-id> <user_email> Reassign a task.
+  hivemind tasks report [<task-id>]            (T5) KPI progress aggregation.
+  Note: KPIs land empty in T3; T4 adds LLM-driven generation. SessionStart
+  injection of relevant tasks lands in T6.
 
 Account / org / workspace:
   hivemind whoami                          Show current user, org, workspace.
@@ -349,6 +362,11 @@ async function main(): Promise<void> {
 
   if (cmd === "rules") {
     await runRulesCommand(args.slice(1));
+    return;
+  }
+
+  if (cmd === "tasks") {
+    await runTasksCommand(args.slice(1));
     return;
   }
 
