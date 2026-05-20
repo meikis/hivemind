@@ -469,4 +469,8 @@ await build({
 });
 chmodSync("embeddings/embed-daemon.js", 0o755);
 
-console.log(`Built: ${ccAll.length} CC + ${codexAll.length} Codex + ${cursorAll.length} Cursor + ${hermesAll.length} Hermes + 1 OpenClaw + 1 MCP + 1 CLI + 1 standalone-daemon bundle`);
+// Status to stderr (not stdout) so callers parsing `npm pack --json` etc.
+// don't get script log noise mixed into their data pipe — see PR #185
+// where `scripts/pack-check.mjs` (which runs `prepack` via npm pack)
+// failed JSON parse because this line and sync-versions printed to stdout.
+console.error(`Built: ${ccAll.length} CC + ${codexAll.length} Codex + ${cursorAll.length} Cursor + ${hermesAll.length} Hermes + 1 OpenClaw + 1 MCP + 1 CLI + 1 standalone-daemon bundle`);

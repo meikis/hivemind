@@ -26,6 +26,7 @@ export default defineConfig({
       "tests/hermes/**/*.test.ts",
       "tests/openclaw/**/*.test.ts",
       "tests/pi/**/*.test.ts",
+      "tests/scripts/**/*.test.ts",
       // Non-agent-specific tests for shared `src/` modules (auth,
       // deeplake-api, embeddings, grep, notifications, etc.). New
       // location since PR #183 — the older convention dumps everything
