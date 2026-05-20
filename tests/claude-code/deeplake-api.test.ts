@@ -494,33 +494,45 @@ describe("DeeplakeApi.ensureTable", () => {
     await expect(api.ensureTable()).rejects.toThrow();
   });
 
-  it("tolerates 'Column already exists' on ALTER ONLY when re-SELECT confirms the race winner landed", async () => {
+  it("tolerates 'Column already exists' on ALTER without re-SELECT (ALTER's verdict is authoritative)", async () => {
+    // Before: this path required a re-SELECT to confirm the column was
+    // present before treating the ALTER error as success. That recheck
+    // false-negated on workspaces where pg's `table_schema` doesn't
+    // match the logical workspaceId (observed live on hivemind_e2e_test),
+    // causing ensureTable to crash for the whole session even though the
+    // SQL engine had just told us the column existed. The fix: trust
+    // ALTER's "already exists" verdict outright. This test locks in the
+    // new behaviour — no recheck, no crash.
     mockFetch.mockResolvedValueOnce({
       ok: true, status: 200,
       json: async () => ({ tables: [{ table_name: "my_table" }] }),
     });
-    // SELECT misses (concurrent run hasn't added the column yet)
+    // SELECT misses (e.g. workspace's table_schema filter false-negated)
     mockFetch.mockResolvedValueOnce(jsonResponse({ columns: ["?column?"], rows: [] }));
-    // ALTER fails with the deterministic "already exists" — race lost
+    // ALTER fails with the deterministic "already exists" — column is present
     mockFetch.mockResolvedValueOnce(
       jsonResponse(`{"error":"Database error: Failed to add column 'summary_embedding' to deeplake dataset: Column 'summary_embedding' already exists","code":"QUERY_ERROR"}`, 500),
     );
-    // Re-SELECT confirms the column is now present (race winner's ALTER landed)
-    mockFetch.mockResolvedValueOnce(jsonResponse({ columns: ["?column?"], rows: [[1]] }));
-    // agent SELECT info_schema → present
+    // No re-SELECT call expected — we trust ALTER's verdict.
+    // Next: agent SELECT info_schema → present
     mockFetch.mockResolvedValueOnce(jsonResponse({ columns: ["?column?"], rows: [[1]] }));
     // plugin_version SELECT info_schema → present
     mockFetch.mockResolvedValueOnce(jsonResponse({ columns: ["?column?"], rows: [[1]] }));
     const api = makeApi("my_table");
     await expect(api.ensureTable()).resolves.toBeUndefined();
-    expect(mockFetch).toHaveBeenCalledTimes(6);
+    expect(mockFetch).toHaveBeenCalledTimes(5); // was 6 with the recheck
     // 2nd call to ensureTable: listTables cached AND all column markers cached → 0 new fetches
     mockFetch.mockReset();
     await api.ensureTable();
     expect(mockFetch).toHaveBeenCalledTimes(0);
   });
 
-  it("rejects 'Column already exists' on ALTER when re-SELECT still reports missing (genuine schema problem)", async () => {
+  it("tolerates 'Column already exists' even when a hypothetical re-SELECT would still report missing", async () => {
+    // Regression guard for the exact production scenario the live e2e
+    // surfaced on hivemind_e2e_test: information_schema's table_schema
+    // filter returned 0 rows AND ALTER said 'already exists'. The old
+    // code rejected here ("genuine schema problem") — wrong, because
+    // ALTER cannot lie about its own catalog. The new code resolves.
     mockFetch.mockResolvedValueOnce({
       ok: true, status: 200,
       json: async () => ({ tables: [{ table_name: "my_table" }] }),
@@ -529,9 +541,12 @@ describe("DeeplakeApi.ensureTable", () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse(`{"error":"Database error: Column 'summary_embedding' already exists","code":"QUERY_ERROR"}`, 500),
     );
-    mockFetch.mockResolvedValueOnce(jsonResponse({ columns: ["?column?"], rows: [] })); // re-SELECT: still missing
+    // No re-SELECT call any more — would have been 'still missing' here
+    // under the old logic, but we don't issue it. Continue to the next column.
+    mockFetch.mockResolvedValueOnce(jsonResponse({ columns: ["?column?"], rows: [[1]] })); // agent
+    mockFetch.mockResolvedValueOnce(jsonResponse({ columns: ["?column?"], rows: [[1]] })); // plugin_version
     const api = makeApi("my_table");
-    await expect(api.ensureTable()).rejects.toThrow();
+    await expect(api.ensureTable()).resolves.toBeUndefined();
   });
 
   it("creates table with custom name", async () => {

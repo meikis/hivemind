@@ -352,15 +352,24 @@ export class DeeplakeApi {
 
     // Column confirmed missing: ALTER without IF NOT EXISTS so any failure is
     // surfaced. The single tolerated exception is a race with another writer
-    // that adds the column between our SELECT and our ALTER — re-SELECT to
-    // confirm and treat as success. Everything else propagates.
+    // that adds the column between our SELECT and our ALTER — Deeplake replies
+    // "already exists" and we treat it as success.
+    //
+    // We deliberately do NOT re-SELECT `colCheck` to confirm presence after the
+    // "already exists" error. On workspaces where pg's `table_schema` doesn't
+    // match our `workspaceId` (e.g. workspaces whose backend uses a different
+    // schema name than the logical workspace name — observed on the
+    // hivemind_e2e_test workspace), the recheck would false-negate, causing us
+    // to re-throw the "already exists" error and crash the entire ensureTable
+    // flow even though the column was provably present. ALTER's "already
+    // exists" verdict is authoritative — the SQL engine can't lie about its
+    // own catalog state — so we trust it and mark the column as present.
     try {
       await this.query(`ALTER TABLE "${table}" ADD COLUMN ${column} ${sqlType}`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       if (!/already exists/i.test(msg)) throw e;
-      const recheck = await this.query(colCheck);
-      if (recheck.length === 0) throw e;
+      // ALTER said "already exists" → column is present. Fall through to mark.
     }
     markers.writeIndexMarker(markerPath);
   }

@@ -353,10 +353,14 @@ describe("scenario 7 — MIXED SESS-EMB (memory no-emb, sessions with-emb)", () 
 // ── Cross-cutting invariants ────────────────────────────────────────────────
 
 describe("schema scenarios — cross-cutting invariants", () => {
-  it("ALTER 'column already exists' (concurrent writer race) is the ONLY tolerated error — re-SELECT confirms and ensureTable resolves", async () => {
-    // Single tolerated race: another writer added the column between our
-    // SELECT (missing) and our ALTER (already-exists). Re-SELECT confirms
-    // the column exists now → success. All other ALTER failures propagate.
+  it("ALTER 'column already exists' is treated as success on its own — no re-SELECT needed", async () => {
+    // Race semantics: another writer added the column between our SELECT
+    // (missing) and our ALTER (already-exists). The fix this test guards:
+    // ALTER's verdict is authoritative on its own; we do NOT issue a
+    // re-SELECT to confirm. The re-SELECT used the same `table_schema =
+    // workspaceId` filter as the initial check, so on workspaces where
+    // that filter false-negates (live e2e symptom) the recheck would
+    // still report "missing" and crash ensureTable for the whole session.
     vi.restoreAllMocks();
     const api = new DeeplakeApi("tok", "https://api.example", "org", "ws", "memory");
     vi.spyOn(api, "listTables").mockResolvedValue(["memory", "sessions"]);
@@ -364,8 +368,10 @@ describe("schema scenarios — cross-cutting invariants", () => {
     let memSchemaSelectCount = 0;
     vi.spyOn(api, "query").mockImplementation(async (sql: string) => {
       if (SCHEMA_MEM.test(sql)) {
-        // First SELECT misses; re-SELECT after the racy ALTER finds it present.
-        return memSchemaSelectCount++ === 0 ? [] : PRESENT.rows;
+        // SELECT misses on every call (filter-mismatch shape). The fix
+        // means we never re-check after ALTER, so this counter ends at 1.
+        memSchemaSelectCount++;
+        return [];
       }
       if (ALTER_MEM.test(sql)) {
         throw new Error(`Query failed: ${ALREADY_EXISTS("summary_embedding").errorStatus}: ${ALREADY_EXISTS("summary_embedding").errorBody}`);
@@ -381,7 +387,7 @@ describe("schema scenarios — cross-cutting invariants", () => {
 
     await expect(api.ensureTable()).resolves.toBeUndefined();
     await expect(api.ensureSessionsTable("sessions")).resolves.toBeUndefined();
-    expect(memSchemaSelectCount).toBe(2); // initial miss + re-confirm
+    expect(memSchemaSelectCount).toBe(1); // initial miss only; no recheck
   });
 
   it("ALTER errors that are NOT 'already exists' propagate — ensureTable rejects (no silent swallow)", async () => {
