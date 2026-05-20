@@ -20,6 +20,7 @@ import { makeWikiLogger } from "../utils/wiki-log.js";
 import { autoUpdate } from "./shared/autoupdate.js";
 import { autoPullSkills } from "../skillify/auto-pull.js";
 import { renderSkillifyCommands } from "../cli/skillify-spec.js";
+import { renderContextBlock } from "./shared/context-renderer.js";
 import { countLocalManifestEntries } from "../skillify/local-manifest.js";
 import { maybeAutoMineLocal } from "../skillify/spawn-mine-local-worker.js";
 const log = (msg: string) => _log("session-start", msg);
@@ -174,6 +175,7 @@ async function main(): Promise<void> {
   // (benchmark runs, explicit opt-out). Mirrors the guard already in
   // session-start-setup.ts / session-end.ts / codex hooks.
   const captureEnabled = process.env.HIVEMIND_CAPTURE !== "false";
+  let rulesTasksBlock = "";
   if (input.session_id && creds?.token) {
     try {
       const config = loadConfig();
@@ -189,6 +191,20 @@ async function main(): Promise<void> {
         } else {
           log("placeholder skipped (HIVEMIND_CAPTURE=false)");
         }
+        // T6: render the rules + tasks block to inject into the agent
+        // context. The renderer absorbs its own errors (missing table,
+        // network, etc.) and returns "" on any failure — SessionStart
+        // MUST NOT fail because of a bad rules/tasks read.
+        rulesTasksBlock = await renderContextBlock(
+          (sql: string) => api.query(sql) as Promise<Array<Record<string, unknown>>>,
+          {
+            rulesTable: config.rulesTableName,
+            tasksTable: config.tasksTableName,
+            taskEventsTable: config.taskEventsTableName,
+            currentUser: config.userName,
+          },
+          { log },
+        );
       }
     } catch (e: any) {
       log(`placeholder failed: ${e.message}`);
@@ -223,9 +239,15 @@ async function main(): Promise<void> {
   const localMinedNote = localMined > 0
     ? `\n\n${localMined} local skill${localMined === 1 ? "" : "s"} from past 'hivemind skillify mine-local' run(s) live in ~/.claude/skills/. Run 'hivemind login' to start sharing new mining results with your team.`
     : "";
-  const additionalContext = creds?.token
+  const baseContext = creds?.token
     ? `${resolvedContext}\n\nLogged in to Deeplake as org: ${creds.orgName ?? creds.orgId} (workspace: ${creds.workspaceId ?? "default"})${updateNotice}`
     : `${resolvedContext}\n\n⚠️ Not logged in to Deeplake. Memory search will not work. Ask the user to run /hivemind:login to authenticate.${localMinedNote}${updateNotice}`;
+  // Append the rules + tasks block when there's something to show.
+  // The renderer returns "" on empty state OR failure, so the
+  // ternary stays terse.
+  const additionalContext = rulesTasksBlock
+    ? `${baseContext}\n\n${rulesTasksBlock}`
+    : baseContext;
 
   console.log(JSON.stringify({
     hookSpecificOutput: {

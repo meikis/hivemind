@@ -45,6 +45,12 @@ const validConfig = {
   token: "t", apiUrl: "http://example", orgId: "o", orgName: "acme",
   workspaceId: "default", userName: "alice",
   tableName: "memory", sessionsTableName: "sessions",
+  // T6 fields — needed so the renderer's sqlIdent doesn't render
+  // FROM "undefined" when the mock loadConfig is consulted.
+  rulesTableName: "hivemind_rules",
+  tasksTableName: "hivemind_tasks",
+  taskEventsTableName: "hivemind_task_events",
+  skillsTableName: "skills",
 };
 
 async function runHook(env: Record<string, string | undefined> = {}): Promise<void> {
@@ -101,7 +107,10 @@ describe("cursor session-start hook — placeholder creation", () => {
     await runHook();
     expect(ensureTableMock).toHaveBeenCalledTimes(1);
     expect(ensureSessionsTableMock).toHaveBeenCalledTimes(1);
-    expect(queryMock).toHaveBeenCalledTimes(2);
+    // 2 placeholder queries + 2 T6 renderer queries (listRules + listTasks
+    // both return [] from the default mock, so computeAllForTasks is
+    // skipped — no events SELECT) = 4 total.
+    expect(queryMock).toHaveBeenCalledTimes(4);
     const insertSql = queryMock.mock.calls[1][0] as string;
     expect(insertSql).toMatch(/INSERT INTO "memory"/);
     expect(insertSql).toContain("'cursor'");
@@ -111,7 +120,9 @@ describe("cursor session-start hook — placeholder creation", () => {
   it("skips INSERT when placeholder already exists", async () => {
     queryMock.mockResolvedValueOnce([{ path: "/summaries/alice/sid-1.md" }]);
     await runHook();
-    expect(queryMock).toHaveBeenCalledTimes(1); // only the SELECT, no INSERT
+    // 1 placeholder SELECT (returns row, no INSERT) + 2 T6 renderer
+    // queries (rules + tasks default to []) = 3 total.
+    expect(queryMock).toHaveBeenCalledTimes(3);
   });
 
   it("skips placeholder when HIVEMIND_CAPTURE=false", async () => {

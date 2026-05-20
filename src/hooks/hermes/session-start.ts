@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { loadCredentials } from "../../commands/auth.js";
 import { loadConfig } from "../../config.js";
 import { DeeplakeApi } from "../../deeplake-api.js";
+import { renderContextBlock } from "../shared/context-renderer.js";
 import { sqlStr } from "../../utils/sql.js";
 import { renderSkillifyCommands } from "../../cli/skillify-spec.js";
 import { countLocalManifestEntries } from "../../skillify/local-manifest.js";
@@ -128,6 +129,7 @@ async function main(): Promise<void> {
   const current = getInstalledVersion(__bundleDir, ".claude-plugin");
   const pluginVersion = current ?? "";
 
+  let rulesTasksBlock = "";
   if (creds?.token && captureEnabled) {
     try {
       const config = loadConfig();
@@ -137,6 +139,19 @@ async function main(): Promise<void> {
         await api.ensureSessionsTable(config.sessionsTableName);
         await createPlaceholder(api, config.tableName, sessionId, cwd, config.userName, config.orgName, config.workspaceId, pluginVersion);
         log("placeholder created");
+        // T6: render the rules + tasks block (same as claude-code / cursor).
+        // Hermes's context field is invisible to the user (model-only),
+        // so the full block is fine. Renderer absorbs its own errors.
+        rulesTasksBlock = await renderContextBlock(
+          (sql: string) => api.query(sql) as Promise<Array<Record<string, unknown>>>,
+          {
+            rulesTable: config.rulesTableName,
+            tasksTable: config.tasksTableName,
+            taskEventsTable: config.taskEventsTableName,
+            currentUser: config.userName,
+          },
+          { log },
+        );
       }
     } catch (e: any) {
       log(`placeholder failed: ${e.message}`);
@@ -160,9 +175,12 @@ async function main(): Promise<void> {
   const localMinedNote = localMined > 0
     ? `\n${localMined} local skill${localMined === 1 ? "" : "s"} from past 'hivemind skillify mine-local' run(s) live in ~/.claude/skills/. Run 'hivemind login' to start sharing new mining results with your team.`
     : "";
-  const additional = creds?.token
+  const baseContext = creds?.token
     ? `${context}\nLogged in to Deeplake as org: ${creds.orgName ?? creds.orgId} (workspace: ${creds.workspaceId ?? "default"})${versionNotice}`
     : `${context}\nNot logged in to Deeplake. Run: hivemind login${localMinedNote}${versionNotice}`;
+  const additional = rulesTasksBlock
+    ? `${baseContext}\n\n${rulesTasksBlock}`
+    : baseContext;
 
   // Hermes expects { context: "..." } on stdout
   console.log(JSON.stringify({ context: additional }));

@@ -111,6 +111,16 @@ async function main(): Promise<void> {
   // memory tiers via `hivemind --help` and `ls ~/.deeplake/memory/` on demand.
   // We therefore emit only login-state + version here, and trust the model
   // to bootstrap the rest.
+  // T6: Codex DOES NOT receive the HIVEMIND RULES + TASKS inject block.
+  // additionalContext is user-visible in Codex (rendered as
+  // `hook context: <text>` in the TUI history cell), so a ~30-line
+  // rules+tasks block on every SessionStart would clobber the user's
+  // view. Codex agents discover rules/tasks via `hivemind rules list`
+  // / `hivemind tasks list` / `hivemind tasks report` on demand —
+  // same pattern as the DEEPLAKE MEMORY block already deliberately
+  // excluded from Codex above. Tracked as an Open Question for v1.1:
+  // "how to surface rules+tasks to Codex without clobbering the TUI"
+  // (model-only injection channel, or a compact opt-in banner).
   const additionalContext = creds?.token
     ? `Hivemind: logged in as org ${creds.orgName ?? creds.orgId} (workspace: ${creds.workspaceId ?? "default"}).${versionNotice}`
     : `Hivemind: not logged in. Run \`hivemind login\` to enable shared memory + skill sharing.${versionNotice}`;
