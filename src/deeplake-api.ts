@@ -7,6 +7,9 @@ import {
   MEMORY_COLUMNS,
   SESSIONS_COLUMNS,
   SKILLS_COLUMNS,
+  RULES_COLUMNS,
+  TASKS_COLUMNS,
+  TASK_EVENTS_COLUMNS,
   buildCreateTableSql,
   healMissingColumns,
 } from "./deeplake-schema.js";
@@ -547,6 +550,73 @@ export class DeeplakeApi {
     // Always heal — same rationale as ensureTable / ensureSessionsTable.
     await this.healSchema(safe, SKILLS_COLUMNS);
     await this.ensureLookupIndex(safe, "project_key_name", `("project_key", "name")`);
+  }
+
+  /**
+   * Create the rules table.
+   *
+   * One row per rule version (same write pattern as skills): edits INSERT
+   * a fresh row with version+1, reads pick latest per rule_id via
+   * `ORDER BY version DESC LIMIT 1`. Sidesteps the Deeplake
+   * UPDATE-coalescing quirk by never UPDATEing.
+   */
+  async ensureRulesTable(name: string): Promise<void> {
+    // `name` ultimately comes from HIVEMIND_RULES_TABLE — sqlIdent rejects
+    // anything outside [A-Za-z_][A-Za-z0-9_]* to keep the CREATE/ALTER
+    // path injection-free.
+    const safe = sqlIdent(name);
+    const tables = await this.listTables();
+    if (!tables.includes(safe)) {
+      log(`table "${safe}" not found, creating`);
+      await this.createTableWithRetry(buildCreateTableSql(safe, RULES_COLUMNS), safe);
+      log(`table "${safe}" created`);
+      if (!tables.includes(safe)) this._tablesCache = [...tables, safe];
+    }
+    await this.healSchema(safe, RULES_COLUMNS);
+    // Latest-row lookup index — matches the SKILLS table's (project_key,
+    // name) pattern. The (rule_id, version) tuple is what `read.ts` will
+    // scan with ORDER BY version DESC LIMIT 1.
+    await this.ensureLookupIndex(safe, "rule_id_version", `("rule_id", "version")`);
+  }
+
+  /**
+   * Create the tasks table.
+   *
+   * Same write pattern as rules + skills. `kpis` is a nullable JSONB
+   * column with the agent's KPI metadata; KPI current values come from
+   * `task_events` (SUM(value)), not this snapshot.
+   */
+  async ensureTasksTable(name: string): Promise<void> {
+    const safe = sqlIdent(name);
+    const tables = await this.listTables();
+    if (!tables.includes(safe)) {
+      log(`table "${safe}" not found, creating`);
+      await this.createTableWithRetry(buildCreateTableSql(safe, TASKS_COLUMNS), safe);
+      log(`table "${safe}" created`);
+      if (!tables.includes(safe)) this._tablesCache = [...tables, safe];
+    }
+    await this.healSchema(safe, TASKS_COLUMNS);
+    await this.ensureLookupIndex(safe, "task_id_version", `("task_id", "version")`);
+  }
+
+  /**
+   * Create the task-events table.
+   *
+   * Append-only. Every INSERT is a fresh row; never UPDATE. KPI current
+   * value is `SUM(value) WHERE task_id=? AND kpi_id=?`. Index on
+   * (task_id, kpi_id) is the canonical aggregation key.
+   */
+  async ensureTaskEventsTable(name: string): Promise<void> {
+    const safe = sqlIdent(name);
+    const tables = await this.listTables();
+    if (!tables.includes(safe)) {
+      log(`table "${safe}" not found, creating`);
+      await this.createTableWithRetry(buildCreateTableSql(safe, TASK_EVENTS_COLUMNS), safe);
+      log(`table "${safe}" created`);
+      if (!tables.includes(safe)) this._tablesCache = [...tables, safe];
+    }
+    await this.healSchema(safe, TASK_EVENTS_COLUMNS);
+    await this.ensureLookupIndex(safe, "task_id_kpi_id", `("task_id", "kpi_id")`);
   }
 }
 
