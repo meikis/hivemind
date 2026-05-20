@@ -128,3 +128,16 @@ export function confirm(message: string, defaultYes = true): Promise<boolean> {
     });
   });
 }
+
+// Free-text prompt. Returns the trimmed answer, or "" if the user just
+// pressed Enter. Same TTY caveat as confirm() — readline hangs on closed
+// stdin, so callers must gate on process.stdin.isTTY.
+export function promptLine(message: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  return new Promise(resolve => {
+    rl.question(message, answer => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}

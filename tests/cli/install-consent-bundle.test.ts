@@ -101,8 +101,8 @@ describe("bundle/cli.js install — non-TTY smoke", () => {
     expect(code).toBe(0);
     const combined = stdout + stderr;
     expect(combined).toContain("No TTY detected");
-    expect(combined).toContain("--token <value>");
-    expect(combined).toContain("DEEPLAKE_API_TOKEN");
+    expect(combined).toContain("https://app.deeplake.ai/api-keys");
+    expect(combined).toContain("DEEPLAKE_API_TOKEN=<key>");
     expect(combined).toContain("hivemind login");
     // Negative-pattern assertion (rule 8): the consent banner must NOT
     // appear in non-TTY mode — that would mean the gate routed to the

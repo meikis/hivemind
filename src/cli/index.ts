@@ -14,7 +14,7 @@ import {
 import { ensureLoggedIn, isLoggedIn, loginWithProvidedToken, maybeShowOrgChoice } from "./auth.js";
 import { runAuthCommand } from "../commands/auth-login.js";
 import { runSkillifyCommand } from "../commands/skillify.js";
-import { confirm, detectPlatforms, allPlatformIds, log, warn, type PlatformId } from "./util.js";
+import { confirm, detectPlatforms, allPlatformIds, log, promptLine, warn, type PlatformId } from "./util.js";
 import { getVersion } from "./version.js";
 import { runUpdate } from "./update.js";
 import { renderCliHelpBlock } from "./skillify-spec.js";
@@ -164,31 +164,51 @@ async function runAuthGate(args: string[]): Promise<void> {
   if (!isTTY) {
     log("");
     log("No TTY detected — continuing without sign-in.");
-    log("To sign in, rerun with `--token <value>`, set DEEPLAKE_API_TOKEN");
-    log("or HIVEMIND_TOKEN, or run `hivemind login` after install.");
+    log("To sign in:");
+    log("  1) Visit https://app.deeplake.ai/api-keys to create an API key");
+    log("  2) Rerun: DEEPLAKE_API_TOKEN=<key> hivemind install");
+    log("Or run `hivemind login` after install.");
     return;
   }
 
   log("");
   log("🐝 One more step to unlock Hivemind");
+  log("");
   log("To enable shared memory and auto-learning across your agents,");
-  log("we need to sign you in. Your traces will be stored in your team's");
-  log("Hivemind so all your agents can recall them.");
+  log("we need to sign you in. Your traces will be securely stored in");
+  log("your private Hivemind, so all your agents can recall them.");
   log("");
-  log("Prefer your own cloud storage (S3 / GCS / Azure Blob)?");
-  log("See https://deeplake.ai or contact us to wire it up.");
-  log("");
-  log("Already have a token? Pass --token <value> or set DEEPLAKE_API_TOKEN.");
+  log("You can later connect your own cloud storage like S3/GCS/Azure Blob.");
   log("");
   const yes = await confirm("Sign in now?", true);
+
+  let signedIn = false;
   if (yes) {
-    const ok = await ensureLoggedIn();
-    if (!ok) {
-      warn("Login did not complete. Continuing install — run `hivemind login` to sign in later.");
+    signedIn = await ensureLoggedIn();
+    if (!signedIn) {
+      warn("Login did not complete.");
     }
-  } else {
+  }
+
+  // Fallback: if user declined OR said Yes but the device flow didn't
+  // finish, offer the API-key paste path. This catches both "I don't want
+  // to do the browser dance" and "I started but it timed out / I closed
+  // the tab" — both used to dead-end the install with no auth.
+  if (!signedIn) {
     log("");
-    log("Skipping sign-in. You can sign in anytime with `hivemind login`.");
+    log("Alternatively, sign in at https://app.deeplake.ai/api-keys, create");
+    log("an API key, and paste it here. Press Enter to skip and continue");
+    log("installing without sign-in (you can run `hivemind login` later).");
+    log("");
+    const pasted = await promptLine("API key: ");
+    if (pasted) {
+      signedIn = await loginWithProvidedToken(pasted);
+      if (!signedIn) {
+        warn("Continuing install — sign in later with `hivemind login` or `DEEPLAKE_API_TOKEN=<key> hivemind install`.");
+      }
+    } else {
+      log("Skipping sign-in. You can sign in anytime with `hivemind login`.");
+    }
   }
 }
 

@@ -72,6 +72,7 @@ vi.mock("../../src/commands/auth-login.js", () => ({
   runAuthCommand: (...a: unknown[]) => runAuthCommandMock(...a),
 }));
 const confirmMock = vi.fn();
+const promptLineMock = vi.fn();
 vi.mock("../../src/cli/util.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/cli/util.js")>();
   return {
@@ -79,6 +80,7 @@ vi.mock("../../src/cli/util.js", async (importOriginal) => {
     detectPlatforms: (...a: unknown[]) => detectPlatformsMock(...a),
     allPlatformIds: (...a: unknown[]) => allPlatformIdsMock(...a),
     confirm: (...a: unknown[]) => confirmMock(...a),
+    promptLine: (...a: unknown[]) => promptLineMock(...a),
   };
 });
 vi.mock("../../src/cli/version.js", () => ({
@@ -101,6 +103,7 @@ vi.mock("../../src/cli/embeddings.js", () => ({
 }));
 
 const originalArgv = process.argv;
+const originalIsTTY = (process.stdin as { isTTY?: boolean }).isTTY;
 
 beforeEach(() => {
   for (const fn of Object.values(installs)) fn.mockReset();
@@ -108,6 +111,9 @@ beforeEach(() => {
   isLoggedInMock.mockReset().mockReturnValue(true);
   loginWithProvidedTokenMock.mockReset().mockResolvedValue(false);
   confirmMock.mockReset().mockResolvedValue(true);
+  // Paste fallback defaults to empty (skip) so existing tests that don't
+  // care about the fallback don't accidentally try to validate a token.
+  promptLineMock.mockReset().mockResolvedValue("");
   maybeShowOrgChoiceMock.mockReset().mockResolvedValue(undefined);
   delete process.env.DEEPLAKE_API_TOKEN;
   delete process.env.HIVEMIND_TOKEN;
@@ -137,6 +143,10 @@ beforeEach(() => {
 
 afterEach(() => {
   process.argv = originalArgv;
+  // Restore process.stdin.isTTY in case a test mutated it — otherwise the
+  // mutation leaks into later tests in the same worker and makes them
+  // order-dependent.
+  Object.defineProperty(process.stdin, "isTTY", { value: originalIsTTY, configurable: true });
   vi.restoreAllMocks();
   vi.resetModules();
 });

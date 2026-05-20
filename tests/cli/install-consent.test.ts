@@ -38,6 +38,7 @@ const allPlatformIdsMock = vi.fn();
 const getVersionMock = vi.fn();
 const runUpdateMock = vi.fn();
 const confirmMock = vi.fn();
+const promptLineMock = vi.fn();
 const stdoutMock = vi.fn();
 const stderrMock = vi.fn();
 const exitSpy = vi.fn();
@@ -84,6 +85,7 @@ vi.mock("../../src/cli/util.js", async (importOriginal) => {
     detectPlatforms: (...a: unknown[]) => detectPlatformsMock(...a),
     allPlatformIds: (...a: unknown[]) => allPlatformIdsMock(...a),
     confirm: (...a: unknown[]) => confirmMock(...a),
+    promptLine: (...a: unknown[]) => promptLineMock(...a),
   };
 });
 vi.mock("../../src/cli/version.js", () => ({
@@ -125,6 +127,8 @@ beforeEach(() => {
   getVersionMock.mockReset().mockReturnValue("1.2.3");
   runUpdateMock.mockReset().mockResolvedValue(0);
   confirmMock.mockReset().mockResolvedValue(true);
+  // Default: paste fallback returns empty (user presses Enter → skip).
+  promptLineMock.mockReset().mockResolvedValue("");
   stdoutMock.mockReset();
   stderrMock.mockReset();
   exitSpy.mockReset();
@@ -166,13 +170,15 @@ const stdoutText = () => stdoutMock.mock.calls.map(c => c[0]).join("");
 const stderrText = () => stderrMock.mock.calls.map(c => c[0]).join("");
 
 describe("install consent gate — TTY paths", () => {
-  it("TTY + decline → no auth attempted, install continues, hint logged", async () => {
+  it("TTY + decline + paste fallback empty → no auth, install continues, skip hint logged", async () => {
     setTTY(true);
     confirmMock.mockResolvedValue(false);
+    promptLineMock.mockResolvedValue(""); // user presses Enter at paste prompt
 
     await runInstall([]);
 
     expect(confirmMock).toHaveBeenCalledTimes(1);
+    expect(promptLineMock).toHaveBeenCalledTimes(1); // fallback offered
     expect(ensureLoggedInMock).not.toHaveBeenCalled();
     expect(loginWithProvidedTokenMock).not.toHaveBeenCalled();
     expect(installs.installClaude).toHaveBeenCalledTimes(1);
@@ -180,7 +186,22 @@ describe("install consent gate — TTY paths", () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it("TTY + accept → ensureLoggedIn exactly once, install continues", async () => {
+  it("TTY + decline + paste valid token → loginWithProvidedToken called with pasted value", async () => {
+    setTTY(true);
+    confirmMock.mockResolvedValue(false);
+    promptLineMock.mockResolvedValue("pasted-tok");
+    loginWithProvidedTokenMock.mockResolvedValue(true);
+
+    await runInstall([]);
+
+    expect(promptLineMock).toHaveBeenCalledTimes(1);
+    expect(loginWithProvidedTokenMock).toHaveBeenCalledTimes(1);
+    expect(loginWithProvidedTokenMock).toHaveBeenCalledWith("pasted-tok");
+    expect(ensureLoggedInMock).not.toHaveBeenCalled();
+    expect(installs.installClaude).toHaveBeenCalledTimes(1);
+  });
+
+  it("TTY + accept → ensureLoggedIn once; paste fallback NOT triggered when signin succeeded", async () => {
     setTTY(true);
     confirmMock.mockResolvedValue(true);
     ensureLoggedInMock.mockResolvedValue(true);
@@ -189,20 +210,38 @@ describe("install consent gate — TTY paths", () => {
 
     expect(confirmMock).toHaveBeenCalledTimes(1);
     expect(ensureLoggedInMock).toHaveBeenCalledTimes(1);
+    expect(promptLineMock).not.toHaveBeenCalled(); // signed in, no fallback
     expect(loginWithProvidedTokenMock).not.toHaveBeenCalled();
     expect(installs.installClaude).toHaveBeenCalledTimes(1);
     expect(stdoutText()).toContain("🐝 One more step to unlock Hivemind");
-    expect(stdoutText()).toContain("Prefer your own cloud storage");
-    expect(stdoutText()).toContain("Already have a token? Pass --token <value> or set DEEPLAKE_API_TOKEN.");
+    expect(stdoutText()).toContain("securely stored in");
+    expect(stdoutText()).toContain("your private Hivemind");
+    expect(stdoutText()).toContain("You can later connect your own cloud storage");
   });
 
-  it("TTY + --token <value> → consent prompt NOT shown, token honored", async () => {
+  it("TTY + accept BUT device flow fails → paste fallback fires", async () => {
+    setTTY(true);
+    confirmMock.mockResolvedValue(true);
+    ensureLoggedInMock.mockResolvedValue(false); // device flow didn't complete
+    promptLineMock.mockResolvedValue("recovery-tok");
+    loginWithProvidedTokenMock.mockResolvedValue(true);
+
+    await runInstall([]);
+
+    expect(ensureLoggedInMock).toHaveBeenCalledTimes(1);
+    expect(promptLineMock).toHaveBeenCalledTimes(1);
+    expect(loginWithProvidedTokenMock).toHaveBeenCalledWith("recovery-tok");
+    expect(installs.installClaude).toHaveBeenCalledTimes(1);
+  });
+
+  it("TTY + --token <value> → consent prompt NOT shown, token honored, no fallback", async () => {
     setTTY(true);
     loginWithProvidedTokenMock.mockResolvedValue(true);
 
     await runInstall(["--token", "tok-abc"]);
 
     expect(confirmMock).not.toHaveBeenCalled();
+    expect(promptLineMock).not.toHaveBeenCalled();
     expect(ensureLoggedInMock).not.toHaveBeenCalled();
     expect(loginWithProvidedTokenMock).toHaveBeenCalledTimes(1);
     expect(loginWithProvidedTokenMock).toHaveBeenCalledWith("tok-abc");
@@ -221,9 +260,8 @@ describe("install consent gate — non-TTY paths", () => {
     expect(loginWithProvidedTokenMock).not.toHaveBeenCalled();
     expect(installs.installClaude).toHaveBeenCalledTimes(1);
     expect(stdoutText()).toContain("No TTY detected");
-    expect(stdoutText()).toContain("--token <value>");
-    expect(stdoutText()).toContain("DEEPLAKE_API_TOKEN");
-    expect(stdoutText()).toContain("HIVEMIND_TOKEN");
+    expect(stdoutText()).toContain("https://app.deeplake.ai/api-keys");
+    expect(stdoutText()).toContain("DEEPLAKE_API_TOKEN=<key>");
     expect(stdoutText()).toContain("hivemind login");
     expect(exitSpy).not.toHaveBeenCalled();
   });
