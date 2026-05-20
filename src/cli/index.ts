@@ -11,10 +11,10 @@ import {
   statusEmbeddings,
   uninstallEmbeddings,
 } from "./embeddings.js";
-import { ensureLoggedIn, isLoggedIn, maybeShowOrgChoice } from "./auth.js";
+import { ensureLoggedIn, isLoggedIn, loginWithProvidedToken, maybeShowOrgChoice } from "./auth.js";
 import { runAuthCommand } from "../commands/auth-login.js";
 import { runSkillifyCommand } from "../commands/skillify.js";
-import { detectPlatforms, allPlatformIds, log, warn, type PlatformId } from "./util.js";
+import { confirm, detectPlatforms, allPlatformIds, log, promptLine, warn, type PlatformId } from "./util.js";
 import { getVersion } from "./version.js";
 import { runUpdate } from "./update.js";
 import { renderCliHelpBlock } from "./skillify-spec.js";
@@ -36,9 +36,13 @@ const USAGE = `
 hivemind — one brain for every agent on your team
 
 Usage:
-  hivemind install   [--only <platforms>] [--skip-auth]
+  hivemind install   [--only <platforms>] [--skip-auth] [--token <value>]
       Auto-detect assistants on this machine and install hivemind into each.
       --only takes a comma-separated list: ${allPlatformIds().join(",")}
+      --token, or env HIVEMIND_TOKEN, signs in non-interactively (useful
+      for CI / scripted installs). Without it, a TTY install shows a
+      consent prompt; a headless install skips auth and prints a hint
+      for 'hivemind login'.
 
   hivemind uninstall [--only <platforms>]
       Auto-detect installed assistants and remove hivemind from each.
@@ -128,6 +132,108 @@ function hasFlag(args: string[], flag: string): boolean {
   return args.includes(flag);
 }
 
+function parseToken(args: string[]): string | undefined {
+  const idx = args.findIndex(a => a === "--token" || a.startsWith("--token="));
+  if (idx === -1) return undefined;
+  const raw = args[idx].includes("=") ? args[idx].split("=", 2)[1] : args[idx + 1];
+  return raw && raw.length > 0 ? raw : undefined;
+}
+
+function hasEnvToken(): boolean {
+  return Boolean(process.env.HIVEMIND_TOKEN);
+}
+
+// Decide how to sign the user in before platform install runs. Three paths,
+// in priority order:
+//   1. A token is provided (flag or env). Validate via /me and save creds —
+//      honored regardless of TTY since a typed/exported token is itself an
+//      act of consent.
+//   2. Non-TTY without a token. We CANNOT prompt (readline would hang on
+//      closed stdin), so print a one-time hint and continue install.
+//   3. TTY without a token. Show the consent prompt; only on "Yes" do we
+//      open the browser via ensureLoggedIn() / device flow.
+// In every path, a failure (or "No") continues the install — hooks land and
+// the user can `hivemind login` later. This is the deliberate inversion
+// behind the consent rollout: install ≠ auth.
+async function runAuthGate(args: string[]): Promise<void> {
+  const flagToken = parseToken(args);
+  const isTTY = Boolean(process.stdin.isTTY);
+
+  // If a token is supplied via flag or env, try it first — but on failure
+  // fall through to the next path (consent prompt in TTY, headless hint
+  // otherwise) so a typoed / revoked token doesn't dead-end the install
+  // with no recovery. Codex review on PR #190 surfaced this.
+  if (flagToken || hasEnvToken()) {
+    const ok = await loginWithProvidedToken(flagToken);
+    if (ok) return;
+  }
+
+  if (!isTTY) {
+    log("");
+    log("No TTY detected — continuing without sign-in.");
+    log("To sign in:");
+    log("  1) Visit https://app.deeplake.ai/api-keys to create an API key");
+    log("  2) Rerun: HIVEMIND_TOKEN=<key> hivemind install");
+    log("Or run `hivemind login` after install.");
+    return;
+  }
+
+  log("");
+  log("🐝 One more step to unlock Hivemind");
+  log("");
+  log("To enable shared memory and auto-learning across your agents,");
+  log("we need to sign you in. Your traces will be securely stored in");
+  log("your private Hivemind, so all your agents can recall them.");
+  log("");
+  log("You can later connect your own cloud storage like S3/GCS/Azure Blob.");
+  log("");
+  const yes = await confirm("Sign in now?", true);
+
+  let signedIn = false;
+  if (yes) {
+    signedIn = await ensureLoggedIn();
+    if (!signedIn) {
+      warn("Login did not complete.");
+    }
+  }
+
+  // Fallback: if user declined OR said Yes but the device flow didn't
+  // finish, offer the API-key paste path. This catches both "I don't want
+  // to do the browser dance" and "I started but it timed out / I closed
+  // the tab" — both used to dead-end the install with no auth.
+  //
+  // The paste prompt loops up to MAX_PASTE_ATTEMPTS times so a single
+  // typo / stale key doesn't kick the user back out of the install. On
+  // empty input we skip; on success we exit immediately.
+  if (!signedIn) {
+    log("");
+    log("Alternatively, sign in at https://app.deeplake.ai/api-keys, create");
+    log("an API key, and paste it here. Press Enter to skip and continue");
+    log("installing without sign-in (you can run `hivemind login` later).");
+    log("");
+
+    const MAX_PASTE_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_PASTE_ATTEMPTS; attempt++) {
+      const pasted = await promptLine("API key: ");
+      if (!pasted) break;
+      signedIn = await loginWithProvidedToken(pasted);
+      if (signedIn) break;
+      const remaining = MAX_PASTE_ATTEMPTS - attempt;
+      if (remaining > 0) {
+        log("");
+        log(`That key wasn't accepted (likely invalid or revoked). Try again (${remaining} attempt${remaining === 1 ? "" : "s"} left) or press Enter to skip.`);
+        log("");
+      }
+    }
+
+    if (!signedIn) {
+      log("");
+      log("Continuing install without sign-in. Run `hivemind login` later, or");
+      log("rerun with `HIVEMIND_TOKEN=<key> hivemind install`.");
+    }
+  }
+}
+
 async function runInstallAll(args: string[]): Promise<void> {
   const only = parseOnly(args);
   const skipAuth = hasFlag(args, "--skip-auth");
@@ -146,11 +252,7 @@ async function runInstallAll(args: string[]): Promise<void> {
   log("");
 
   if (!skipAuth && !isLoggedIn()) {
-    const ok = await ensureLoggedIn();
-    if (!ok) {
-      warn("Skipping install because login did not complete.");
-      process.exit(1);
-    }
+    await runAuthGate(args);
   }
 
   for (const id of targets) runSingleInstall(id);

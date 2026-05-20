@@ -18,7 +18,10 @@ import {
   allPlatformIds,
   log,
   warn,
+  confirm,
+  promptLine,
 } from "../../src/cli/util.js";
+import { Readable } from "node:stream";
 
 /**
  * Tests for src/cli/util.ts — the shared filesystem + platform-detection
@@ -254,5 +257,86 @@ describe("log / warn", () => {
     expect(stderrSpy).toHaveBeenCalledTimes(1);
     expect(stderrSpy).toHaveBeenCalledWith("oops\n");
     expect(stdoutSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("confirm", () => {
+  let stdinBackup: NodeJS.ReadStream;
+
+  beforeEach(() => {
+    stdinBackup = process.stdin;
+    // Silence the rendered question to keep test output clean.
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, "stdin", { value: stdinBackup, configurable: true });
+    vi.restoreAllMocks();
+  });
+
+  function stubStdin(input: string): void {
+    const stream = Readable.from([input]) as unknown as NodeJS.ReadStream;
+    Object.defineProperty(process, "stdin", { value: stream, configurable: true });
+  }
+
+  it("returns defaultYes=true on bare Enter (empty line)", async () => {
+    stubStdin("\n");
+    expect(await confirm("?", true)).toBe(true);
+  });
+
+  it("returns defaultYes=false on bare Enter when default is no", async () => {
+    stubStdin("\n");
+    expect(await confirm("?", false)).toBe(false);
+  });
+
+  it("'y' / 'yes' both resolve true (case-insensitive)", async () => {
+    stubStdin("y\n");
+    expect(await confirm("?", false)).toBe(true);
+    stubStdin("YES\n");
+    expect(await confirm("?", false)).toBe(true);
+  });
+
+  it("'n' resolves false even when defaultYes is true", async () => {
+    stubStdin("n\n");
+    expect(await confirm("?", true)).toBe(false);
+  });
+
+  it("any other input resolves false (conservative default)", async () => {
+    stubStdin("maybe\n");
+    expect(await confirm("?", true)).toBe(false);
+  });
+});
+
+describe("promptLine", () => {
+  let stdinBackup: NodeJS.ReadStream;
+
+  beforeEach(() => {
+    stdinBackup = process.stdin;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    Object.defineProperty(process, "stdin", { value: stdinBackup, configurable: true });
+    vi.restoreAllMocks();
+  });
+
+  function stubStdin(input: string): void {
+    const stream = Readable.from([input]) as unknown as NodeJS.ReadStream;
+    Object.defineProperty(process, "stdin", { value: stream, configurable: true });
+  }
+
+  it("returns the trimmed input line", async () => {
+    stubStdin("  hello-token  \n");
+    expect(await promptLine("API key: ")).toBe("hello-token");
+  });
+
+  it("returns empty string on a bare Enter (signal to skip)", async () => {
+    stubStdin("\n");
+    expect(await promptLine("API key: ")).toBe("");
+  });
+
+  it("preserves internal whitespace in pasted tokens", async () => {
+    stubStdin("tok with spaces\n");
+    expect(await promptLine("API key: ")).toBe("tok with spaces");
   });
 });

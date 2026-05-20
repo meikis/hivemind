@@ -392,6 +392,91 @@ describe("login (full flow)", () => {
   });
 });
 
+describe("saveCredentialsFromToken — org-pinning", () => {
+  // Build a minimal API-token JWT (header.payload.signature, base64url) with
+  // an org_id claim so we can test that saveCredentialsFromToken honors it
+  // instead of silently falling back to orgs[0].
+  function makeToken(claims: Record<string, unknown>): string {
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    return `${b64({ alg: "HS256" })}.${b64(claims)}.signature`;
+  }
+
+  afterEach(() => {
+    delete process.env.HIVEMIND_ORG_ID;
+  });
+
+  it("skipTokenMint=true honors the org_id claim from the token JWT (multi-org user)", async () => {
+    const token = makeToken({ org_id: "o2", user_id: "u1" });
+    fetchMock
+      .mockResolvedValueOnce(ok({ id: "u1", name: "Alice" }))
+      .mockResolvedValueOnce(ok([
+        { id: "o1", name: "acme" },
+        { id: "o2", name: "globex" },
+      ]));
+    const { saveCredentialsFromToken } = await importAuth();
+    const creds = await saveCredentialsFromToken(token, "https://api.example", { skipTokenMint: true });
+    expect(creds.orgId).toBe("o2");
+    expect(creds.orgName).toBe("globex");
+    // No /users/me/tokens mint call should have been made.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("HIVEMIND_ORG_ID env beats the JWT claim (explicit user override)", async () => {
+    process.env.HIVEMIND_ORG_ID = "o1";
+    const token = makeToken({ org_id: "o2", user_id: "u1" });
+    fetchMock
+      .mockResolvedValueOnce(ok({ id: "u1", name: "Alice" }))
+      .mockResolvedValueOnce(ok([
+        { id: "o1", name: "acme" },
+        { id: "o2", name: "globex" },
+      ]));
+    const { saveCredentialsFromToken } = await importAuth();
+    const creds = await saveCredentialsFromToken(token, "https://api.example", { skipTokenMint: true });
+    expect(creds.orgId).toBe("o1");
+    expect(creds.orgName).toBe("acme");
+  });
+
+  it("falls back to orgs[0] + warning when claim points at an org the user no longer belongs to", async () => {
+    const token = makeToken({ org_id: "o-stale", user_id: "u1" });
+    fetchMock
+      .mockResolvedValueOnce(ok({ id: "u1", name: "Alice" }))
+      .mockResolvedValueOnce(ok([
+        { id: "o1", name: "acme" },
+        { id: "o2", name: "globex" },
+      ]));
+    let stderrText = "";
+    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(((s: string | Uint8Array) => {
+      stderrText += typeof s === "string" ? s : Buffer.from(s).toString();
+      return true;
+    }) as typeof process.stderr.write);
+    try {
+      const { saveCredentialsFromToken } = await importAuth();
+      const creds = await saveCredentialsFromToken(token, "https://api.example", { skipTokenMint: true });
+      expect(creds.orgId).toBe("o1");
+      expect(stderrText).toContain("set HIVEMIND_ORG_ID to override");
+    } finally {
+      stderrSpy.mockRestore();
+    }
+  });
+
+  it("skipTokenMint=false (device flow) does NOT decode the token — picks orgs[0] as before", async () => {
+    const token = makeToken({ org_id: "o2", user_id: "u1" });
+    fetchMock
+      .mockResolvedValueOnce(ok({ id: "u1", name: "Alice" }))
+      .mockResolvedValueOnce(ok([
+        { id: "o1", name: "acme" },
+        { id: "o2", name: "globex" },
+      ]))
+      .mockResolvedValueOnce(ok({ token: { token: "minted-tok" } }));
+    const { saveCredentialsFromToken } = await importAuth();
+    const creds = await saveCredentialsFromToken(token, "https://api.example", { skipTokenMint: false });
+    // Device flow mints the API token bound to orgs[0]; that ordering stays
+    // identical to the pre-change behaviour for backwards compat.
+    expect(creds.orgId).toBe("o1");
+    expect(creds.token).toBe("minted-tok");
+  });
+});
+
 describe("API helper error path", () => {
   it("apiGet throws with status code on non-2xx", async () => {
     fetchMock.mockResolvedValueOnce(new Response("forbidden", { status: 403 }));

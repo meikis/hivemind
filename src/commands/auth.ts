@@ -215,44 +215,75 @@ export async function removeMember(
 
 // ── Full Login Flow ──────────────────────────────────────────────────────────
 
-export async function login(apiUrl = DEFAULT_API_URL): Promise<Credentials> {
-  // Step 1: Device flow → get short-lived token
-  const { token: authToken } = await deviceFlowLogin(apiUrl);
-
-  // Step 2: Get user info
-  const user = await apiGet("/me", authToken, apiUrl) as { id: string; name: string; email?: string };
+// Hydrate Credentials from a token: fetch /me, pick an org, optionally mint a
+// long-lived API token, and persist. Shared by the device flow (which passes
+// a short-lived Auth0 token and needs skipTokenMint=false) and the env-var /
+// --token paths (which receive a long-lived token already and pass
+// skipTokenMint=true). Centralizing here means there is exactly one place
+// that writes ~/.deeplake/credentials.json from a token.
+export async function saveCredentialsFromToken(
+  token: string,
+  apiUrl: string,
+  opts: { skipTokenMint?: boolean } = {},
+): Promise<Credentials> {
+  const user = await apiGet("/me", token, apiUrl) as { id: string; name: string; email?: string };
   const userName = user.name || (user.email ? user.email.split("@")[0] : "unknown");
   process.stderr.write(`\nLogged in as: ${userName}\n`);
 
-  // Step 3: List orgs and select
-  const orgs = await listOrgs(authToken, apiUrl);
+  const orgs = await listOrgs(token, apiUrl);
+  if (orgs.length === 0) throw new Error("No organizations found for this account.");
+
+  // Pick the org the token is bound to, in priority order:
+  //   1. HIVEMIND_ORG_ID env var override (explicit user choice).
+  //   2. `org_id` claim baked into the API-token JWT (skipTokenMint=true
+  //      path: the token was minted server-side bound to this org, so
+  //      using anything else would route hooks at the wrong org).
+  //   3. Fall back to orgs[0] for the device-flow path (will be re-bound
+  //      by the upcoming /users/me/tokens mint anyway).
+  // Without these layers a multi-org user pasting an API key would
+  // silently bind to the wrong org and every later capture would land
+  // there. Codex review surfaced this on PR #190.
+  const envOrgId = process.env.HIVEMIND_ORG_ID;
+  let preferredOrgId: string | undefined = envOrgId;
+  if (!preferredOrgId && opts.skipTokenMint) {
+    const claims = decodeJwtPayload(token);
+    const claimOrg = claims && typeof claims.org_id === "string" ? claims.org_id : undefined;
+    if (claimOrg) preferredOrgId = claimOrg;
+  }
   let orgId: string;
   let orgName: string;
-
-  if (orgs.length === 1) {
+  const matched = preferredOrgId ? orgs.find(o => o.id === preferredOrgId) : undefined;
+  if (matched) {
+    orgId = matched.id;
+    orgName = matched.name;
+    process.stderr.write(`Organization: ${orgName}\n`);
+  } else if (orgs.length === 1) {
     orgId = orgs[0].id;
     orgName = orgs[0].name;
     process.stderr.write(`Organization: ${orgName}\n`);
   } else {
     process.stderr.write("\nOrganizations:\n");
     orgs.forEach((org, i) => process.stderr.write(`  ${i + 1}. ${org.name}\n`));
-    // Default to first org — Claude can switch later
     orgId = orgs[0].id;
     orgName = orgs[0].name;
-    process.stderr.write(`\nUsing: ${orgName}\n`);
+    if (opts.skipTokenMint) {
+      process.stderr.write(`\nUsing: ${orgName} (set HIVEMIND_ORG_ID to override)\n`);
+    } else {
+      process.stderr.write(`\nUsing: ${orgName}\n`);
+    }
   }
 
-  // Step 4: Exchange for long-lived API token
-  const tokenName = `deeplake-plugin-${new Date().toISOString().slice(0, 10)}`;
-  const tokenData = await apiPost("/users/me/tokens", {
-    name: tokenName,
-    duration: 365 * 24 * 3600,
-    organization_id: orgId,
-  }, authToken, apiUrl) as { token: { token: string } };
+  let apiToken = token;
+  if (!opts.skipTokenMint) {
+    const tokenName = `deeplake-plugin-${new Date().toISOString().slice(0, 10)}`;
+    const tokenData = await apiPost("/users/me/tokens", {
+      name: tokenName,
+      duration: 365 * 24 * 3600,
+      organization_id: orgId,
+    }, token, apiUrl) as { token: { token: string } };
+    apiToken = tokenData.token.token;
+  }
 
-  const apiToken = tokenData.token.token;
-
-  // Step 5: Save credentials
   const creds: Credentials = {
     token: apiToken,
     orgId,
@@ -263,6 +294,10 @@ export async function login(apiUrl = DEFAULT_API_URL): Promise<Credentials> {
     savedAt: new Date().toISOString(),
   };
   saveCredentials(creds);
-
   return creds;
+}
+
+export async function login(apiUrl = DEFAULT_API_URL): Promise<Credentials> {
+  const { token: authToken } = await deviceFlowLogin(apiUrl);
+  return saveCredentialsFromToken(authToken, apiUrl, { skipTokenMint: false });
 }
