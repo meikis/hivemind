@@ -66,6 +66,12 @@ beforeEach(() => {
   ensureTaskEventsTableMock.mockReset().mockResolvedValue(undefined);
   queryMock.mockReset().mockResolvedValue([]);
   loadConfigMock.mockReset().mockReturnValue(VALID_CONFIG);
+  // T4: `tasks add` now calls generateKpis(text) → without an API key
+  // or with HIVEMIND_KPI_LLM=disable, it returns [] (no network).
+  // Force-unset both so a real env var leaking in from the shell
+  // cannot turn these unit tests into network calls.
+  delete process.env.ANTHROPIC_API_KEY;
+  delete process.env.HIVEMIND_KPI_LLM;
   logSpy = vi.spyOn(console, "log").mockImplementation((...a: any[]) => { logged.push(a.join(" ")); });
   errSpy = vi.spyOn(console, "error").mockImplementation((...a: any[]) => { erred.push(a.join(" ")); });
   exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {

@@ -34,11 +34,21 @@ export interface InsertTaskInput {
   /** user_email of whoever filed the task (always required). */
   assigned_by: string;
   /**
-   * Initial KPI set. T3 writes `[]`; T4 wires an LLM call that produces
-   * a populated array from `text`. Validated through stringifyKpis to
-   * drop any item that doesn't match the canonical shape.
+   * Explicit KPI set. If provided, OVERRIDES any auto-generation
+   * (caller knows what they want — useful for tests and bulk import).
+   * Validated through stringifyKpis to drop malformed items.
    */
   kpis?: Kpi[];
+  /**
+   * Optional async KPI generator (added in T4). Called with `text`
+   * when `kpis` is omitted; whatever it returns is then validated
+   * through stringifyKpis. A throwing or empty generator just lands
+   * an empty kpis JSONB — the task still INSERTs successfully.
+   * Caller is responsible for picking the generator (LLM vs no-op
+   * stub vs canned fixture). insertTask itself does NOT import any
+   * LLM client.
+   */
+  generateKpis?: (text: string) => Promise<Kpi[]>;
   agent?: string;
   plugin_version?: string;
 }
@@ -98,7 +108,21 @@ export async function insertTask(
   const rowId = randomUUID();
   const now = new Date().toISOString();
   const assignedTo = input.assigned_to ?? input.assigned_by;
-  const kpisJson = stringifyKpis(input.kpis ?? []);
+  // KPI source-of-truth precedence:
+  //   1. explicit `kpis` from caller (always wins — tests, bulk import)
+  //   2. `generateKpis` callback (T4 LLM gen — caller picks the generator)
+  //   3. [] (T3 default: no LLM wired)
+  // A throwing generator is treated the same as returning [] — the
+  // task INSERT must NOT fail because the LLM is down.
+  let kpis: Kpi[];
+  if (input.kpis !== undefined) {
+    kpis = input.kpis;
+  } else if (input.generateKpis) {
+    kpis = await input.generateKpis(input.text).catch(() => []);
+  } else {
+    kpis = [];
+  }
+  const kpisJson = stringifyKpis(kpis);
   const agent = input.agent ?? "manual";
   const pluginVersion = input.plugin_version ?? "";
 

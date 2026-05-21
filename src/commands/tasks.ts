@@ -59,6 +59,7 @@ import {
   type Kpi,
 } from "../tasks/index.js";
 import { appendEvent, computeAllForTask } from "../events/index.js";
+import { generateKpis } from "../tasks/kpi-generator.js";
 
 const USAGE = `
 hivemind tasks — manage personal + team tasks
@@ -271,7 +272,11 @@ export async function runTasksCommand(args: string[]): Promise<void> {
         scope,
         assigned_to: assignedTo,
         assigned_by: cfg.userName,
-        // kpis intentionally omitted → defaults to [] until T4 lands an LLM call.
+        // T4: pass the LLM generator. insertTask awaits it before
+        // INSERT so the persisted row carries KPIs from the start.
+        // generateKpis returns [] gracefully on missing API key,
+        // timeout, or any failure — task INSERT keeps working.
+        generateKpis: (taskText: string) => generateKpis({ text: taskText }),
         plugin_version: pluginVersion,
       });
       console.log(`Added task ${out.task_id} (v${out.version}, scope=${scope}, assigned_to=${assignedTo}).`);
