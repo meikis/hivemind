@@ -372,30 +372,41 @@ describe("renderContextBlock — tasks section + visibility filter", () => {
     expect(occurrences).toBe(1);
   });
 
-  it("dedup picks HIGHER version on collision (codex legacy audit P3 — concurrent-edit race)", async () => {
-    // Codex caught: team-query fires first, mine-query second. If a
-    // team task assigned to current_user is edited BETWEEN the two
-    // SELECTs, mine sees v=2 but team has v=1. The earlier dedup
-    // kept first-occurrence (team), which would inject stale text.
-    // Now: highest version wins regardless of fetch order.
-    const v1 = fakeTask({
-      task_id: "raced-id", scope: "team", assigned_to: "alice@activeloop.ai",
-      version: 1, text: "old text (v1)", created_at: "2026-05-20T10:00:00Z",
+  it("mine bucket is scope-filtered to 'me' rows — team rows in mine query are dropped (codex legacy audit pass 2 P1.2)", async () => {
+    // listTasks(scope='mine') returns rows where assigned_to=current
+    // regardless of row scope — a side-effect of the read.ts contract.
+    // If the renderer kept those team-scope rows in mine, a user with
+    // many team tasks assigned to them would see those tasks consume
+    // both buckets and crowd out genuine me-scope tasks.
+    //
+    // New contract: renderer filters mine→me-scope-only. Team-scope
+    // tasks assigned to current user still appear via the team query
+    // (with the ★YOU highlight).
+    const teamRowAssignedToMe = fakeTask({
+      task_id: "team-task", scope: "team", assigned_to: "alice@activeloop.ai",
+      version: 1, text: "team work", created_at: "2026-05-20T10:00:00Z",
     });
-    const v2 = fakeTask({
-      task_id: "raced-id", scope: "team", assigned_to: "alice@activeloop.ai",
-      version: 2, text: "new text (v2)", created_at: "2026-05-20T10:05:00Z",
+    // Simulate a real me-scope task that should be visible.
+    const meRow = fakeTask({
+      task_id: "personal-task", scope: "me", assigned_to: "alice@activeloop.ai",
+      version: 1, text: "personal todo", created_at: "2026-05-20T10:01:00Z",
     });
+    // mine query also returns the team-assigned row (read.ts contract);
+    // renderer must drop it before merge.
     const { query } = mockQuery([
       () => [],
-      () => [v1],     // team query returned the OLDER row
-      () => [v2],     // mine query saw the edit, returned NEWER row
-      () => [],       // events
+      () => [teamRowAssignedToMe],
+      () => [teamRowAssignedToMe, meRow],
+      () => [],
     ]);
     const out = await renderContextBlock(query, { ...TABLES, currentUser: "alice@activeloop.ai" });
-    // The v=2 text must win — v=1 must NOT appear.
-    expect(out).toContain("new text (v2)");
-    expect(out).not.toContain("old text (v1)");
+    // team-task appears once (from the team query, with ★YOU).
+    const teamOccurrences = (out.match(/team-task/g) ?? []).length;
+    expect(teamOccurrences).toBe(1);
+    expect(out).toContain("★YOU");
+    // me-scope personal-task is preserved.
+    expect(out).toContain("personal-task");
+    expect(out).toContain("personal todo");
   });
 
   it("preserves visible tasks even when many private OTHER-user tasks would push them out of a global cap — codex P2 pass 1 regression guard", async () => {

@@ -127,7 +127,24 @@ export async function renderContextBlock(
       log(`render-context-block: tasks unavailable (continuing): ${tmsg}`);
       // teamTasks / myTasks stay [] — block still renders any rules.
     }
-    const visibleTasks = mergeAndDedupTasks(teamTasks, myTasks);
+    // Codex legacy audit pass 2 (P1.2): listTasks(scope="mine")
+    // returns every row where assigned_to=current_user, regardless of
+    // the row's scope. That means a team-scope task assigned to the
+    // current user lands in BOTH `teamTasks` and `myTasks` (fine,
+    // merge dedups) — BUT if there are many newer team-scope tasks
+    // not assigned to current user, the team-scope-but-assigned-to-me
+    // task gets pushed out of the team-side cap window AND duplicated
+    // into the mine bucket, where it can in turn squeeze out genuine
+    // personal me-scope tasks. Net effect: a user with many team
+    // tasks loses visibility on their personal me-scope tasks.
+    //
+    // Fix: scope the renderer's "mine" bucket to me-scope rows only.
+    // Team-scope tasks assigned to current user remain visible via
+    // the team query (with ★YOU highlight). The listTasks API
+    // contract is unchanged — CLI consumers like `hivemind tasks
+    // list --mine` still see the full union.
+    const myPersonalTasks = myTasks.filter(t => t.scope === "me");
+    const visibleTasks = mergeAndDedupTasks(teamTasks, myPersonalTasks);
 
     const rulesShown = rules.slice(0, maxRules);
     const rulesHidden = Math.max(0, rules.length - maxRules);
