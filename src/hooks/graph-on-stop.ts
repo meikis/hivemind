@@ -1,17 +1,22 @@
 /**
  * Auto-build hook for the codebase-graph feature (Phase 1.5).
  *
- * Registered in claude-code/hooks/hooks.json under BOTH "Stop" and
- * "SessionEnd" with async: true. Why both:
- *   - "Stop" fires after every model turn in INTERACTIVE Claude sessions.
- *     Rate-limit gate (10 min default) makes this cheap; you get
- *     near-real-time graph freshness while coding.
- *   - "SessionEnd" fires when the session closes. The ONLY end-of-session
- *     event that fires in `claude -p` non-interactive mode (where Stop is
- *     skipped), so without this registration `claude -p --plugin-dir` runs
- *     the agent and exits without ever rebuilding the graph.
- * Both paths run the same gate logic and share the same .last-build.json
- * rate limit, so double-firing is harmless.
+ * Registered in claude-code/hooks/hooks.json under "SessionEnd" only,
+ * with async: true. Why NOT "Stop":
+ *   - "Stop" fires after every model turn in interactive sessions, but
+ *     `claude -p` (non-interactive) skips it entirely. We need an event
+ *     that fires in BOTH modes, and SessionEnd does.
+ *   - Registering under both Stop AND SessionEnd creates a race at session
+ *     close: Stop fires (async, build starts), SessionEnd fires shortly
+ *     after, both processes read the stale .last-build.json (rate-limit
+ *     state is only written after the build completes), both decide FIRE,
+ *     both run the full build in parallel. Codex review caught this.
+ *   - Phase 1.5 has no in-session MCP consumption of the graph (that's
+ *     Phase 4), so per-turn freshness has no observable user benefit.
+ *     One build at session close is enough.
+ *   - When Phase 4 lands and the agent reads the graph mid-session, we can
+ *     re-add Stop with proper cross-process locking (or content-hash
+ *     dedup before writeSnapshot).
  *
  * Common-case workload (when the gate skips):
  *

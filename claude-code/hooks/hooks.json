@@ -66,12 +66,6 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/capture.js\"",
             "timeout": 30,
             "async": true
-          },
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/bundle/graph-on-stop.js\"",
-            "timeout": 30,
-            "async": true
           }
         ]
       }
