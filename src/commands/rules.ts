@@ -32,6 +32,7 @@ import {
   listRules,
   type RuleRow,
 } from "../rules/index.js";
+import { isMissingTableError } from "../deeplake-schema.js";
 
 const USAGE = `
 hivemind rules — manage team-wide rules
@@ -151,7 +152,14 @@ export async function runRulesCommand(args: string[]): Promise<void> {
   const cfg = requireConfig();
   const api = makeApi(cfg);
   const tableName = cfg.rulesTableName;
-  await api.ensureRulesTable(tableName);
+  // Only the write subcommands need DDL — read-only `list` falls back
+  // to isMissingTableError handling so a legacy / fresh-install user
+  // doesn't take a CREATE/ALTER round-trip every time they list.
+  // Codex legacy audit caught this.
+  const WRITE_SUBS = new Set(["add", "edit", "done"]);
+  if (WRITE_SUBS.has(sub)) {
+    await api.ensureRulesTable(tableName);
+  }
   const pluginVersion = getVersion();
 
   if (sub === "add") {
@@ -180,7 +188,14 @@ export async function runRulesCommand(args: string[]): Promise<void> {
   if (sub === "list") {
     const status = parseStatus(args.slice(1));
     const limit = parseLimit(args.slice(1));
-    const rows = await listRules(api.query.bind(api), tableName, { status, limit });
+    let rows: RuleRow[] = [];
+    try {
+      rows = await listRules(api.query.bind(api), tableName, { status, limit });
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (!isMissingTableError(msg)) throw err;
+      // table missing = legacy state; show empty list.
+    }
     if (rows.length === 0) {
       console.log(`(no rules with status=${status})`);
       return;

@@ -104,6 +104,14 @@ function validateOne(item: unknown): Kpi | null {
   ) {
     return null;
   }
+  // Target must be a POSITIVE INTEGER. The spec + prompt contract say
+  // so; the renderer would otherwise show "PRs merged: 0/0" or
+  // "/-1 count" which are confusing or impossible goals. Codex legacy
+  // audit caught the prior over-permissive `num()` check that let
+  // 0, -1, and 1.5 through. `current` stays loose (can be any number).
+  if (!Number.isInteger(target) || target <= 0) {
+    return null;
+  }
   const out: Kpi = {
     kpi_id,
     name,

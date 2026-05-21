@@ -519,20 +519,25 @@ describe("runTasksCommand — report", () => {
     expect(ensureTaskEventsTableMock).not.toHaveBeenCalled();
   });
 
-  it("pre-ensures task_events at the top of report — codex P2 regression guard", async () => {
-    // Fresh install: listTasks returns one task with KPIs; aggregate
-    // SELECT would otherwise fail with "table does not exist" before
-    // the report could render anything. Pre-ensuring up front means
-    // a never-used-before events table doesn't crash report.
+  it("`report` does NOT pre-ensure task_events (codex legacy audit: read-only path stays read-only)", async () => {
+    // Earlier the report subcommand pre-ensured task_events to handle
+    // fresh-install missing-table. Codex legacy audit caught that
+    // turning a read-only command into a schema writer was wrong —
+    // legacy users without DDL privileges (or with HIVEMIND_CAPTURE=
+    // false intent) would crash. Now: aggregate failure on missing
+    // events table is caught locally and renders 0/target.
     const KPI = {
       kpi_id: "k_pr", name: "PRs merged", target: 5, unit: "count",
       generated_by: "manual", generated_at: "2026-05-20T10:00:00Z",
     };
     queryMock.mockResolvedValueOnce([fakeRow({ kpis: JSON.stringify([KPI]) })]); // listTasks
-    queryMock.mockResolvedValueOnce([{ kpi_id: "k_pr", total: 0 }]);             // computeAllForTask
+    queryMock.mockRejectedValueOnce(new Error(`Table does not exist: relation "hivemind_task_events" does not exist`));
     await runTasksCommand(["report"]);
-    expect(ensureTaskEventsTableMock).toHaveBeenCalledTimes(1);
-    expect(ensureTaskEventsTableMock).toHaveBeenCalledWith("hivemind_task_events");
+    // No DDL writes regardless of table state.
+    expect(ensureTaskEventsTableMock).not.toHaveBeenCalled();
+    expect(ensureTasksTableMock).not.toHaveBeenCalled();
+    // Reports 0/5 since events table absent.
+    expect(logged.some(l => l.includes("PRs merged: 0/5 count"))).toBe(true);
   });
 
   it("per-task: aggregates events via SUM and renders current/target per KPI", async () => {
@@ -615,15 +620,37 @@ describe("runTasksCommand — report", () => {
 // ── ensureTasksTable wiring ─────────────────────────────────────────────────
 
 describe("runTasksCommand — schema bootstrap", () => {
-  it("calls ensureTasksTable exactly once with the configured table name", async () => {
+  // The earlier blanket "calls ensureTasksTable exactly once" pinned
+  // the pre-codex-legacy-audit contract that ran DDL on every
+  // invocation. The new contract: ensure ONLY for write subcommands.
+  // See the two `does NOT call ensureTasksTable on list` /
+  // `calls ensureTasksTable on add` tests below.
+
+  it("does NOT call ensureTasksTable on `list` (read-only — codex legacy audit P2)", async () => {
+    loadConfigMock.mockReturnValueOnce({ ...VALID_CONFIG, tasksTableName: "tasks_test" });
     await runTasksCommand(["list", "--all"]);
+    // list is read-only → no DDL writes (was previously unconditional).
+    expect(ensureTasksTableMock).not.toHaveBeenCalled();
+  });
+
+  it("calls ensureTasksTable on `add` (write — DDL needed)", async () => {
+    await runTasksCommand(["add", "x"]);
     expect(ensureTasksTableMock).toHaveBeenCalledTimes(1);
     expect(ensureTasksTableMock).toHaveBeenCalledWith("hivemind_tasks");
   });
 
-  it("honors HIVEMIND_TASKS_TABLE override via cfg.tasksTableName", async () => {
-    loadConfigMock.mockReturnValueOnce({ ...VALID_CONFIG, tasksTableName: "tasks_test" });
-    await runTasksCommand(["list", "--all"]);
-    expect(ensureTasksTableMock).toHaveBeenCalledWith("tasks_test");
+  it("`list` against MISSING table shows empty state instead of crashing (legacy users)", async () => {
+    queryMock.mockReset().mockRejectedValueOnce(new Error(`Table does not exist: relation "hivemind_tasks" does not exist`));
+    await runTasksCommand(["list"]);
+    expect(logged.some(l => l.includes("(no tasks with scope=mine"))).toBe(true);
+    expect(ensureTasksTableMock).not.toHaveBeenCalled();
+  });
+
+  it("`report` against MISSING tasks table shows empty state — no DDL writes", async () => {
+    queryMock.mockReset().mockRejectedValueOnce(new Error(`Table does not exist: relation "hivemind_tasks" does not exist`));
+    await runTasksCommand(["report"]);
+    expect(logged.some(l => l.includes("(no active tasks to report on)"))).toBe(true);
+    expect(ensureTasksTableMock).not.toHaveBeenCalled();
+    expect(ensureTaskEventsTableMock).not.toHaveBeenCalled();
   });
 });

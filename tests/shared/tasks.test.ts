@@ -93,6 +93,22 @@ describe("parseKpis", () => {
     expect(out[0].kpi_id).toBe("k_abc");
   });
 
+  it("rejects non-positive-integer targets (0 / -1 / 1.5) — codex legacy audit", async () => {
+    // The spec + prompt contract say target is a POSITIVE INTEGER.
+    // The earlier `num()` check let anything finite through, so
+    // malformed LLM payloads could land target=0 (impossible goal)
+    // or target=1.5 (renderer would show "0/1.5 count").
+    const out = parseKpis([
+      { ...SAMPLE_KPI, kpi_id: "ok",    target: 5    },
+      { ...SAMPLE_KPI, kpi_id: "zero",  target: 0    },
+      { ...SAMPLE_KPI, kpi_id: "neg",   target: -1   },
+      { ...SAMPLE_KPI, kpi_id: "frac",  target: 1.5  },
+      { ...SAMPLE_KPI, kpi_id: "inf",   target: Infinity },
+      { ...SAMPLE_KPI, kpi_id: "nan",   target: NaN  },
+    ]);
+    expect(out.map(k => k.kpi_id)).toEqual(["ok"]);
+  });
+
   it("preserves optional `current` when it's a finite number", () => {
     const out = parseKpis([{ ...SAMPLE_KPI, current: 2 }]);
     expect(out[0].current).toBe(2);

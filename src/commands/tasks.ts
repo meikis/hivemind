@@ -60,6 +60,7 @@ import {
 } from "../tasks/index.js";
 import { appendEvent, computeAllForTask } from "../events/index.js";
 import { generateKpis } from "../tasks/kpi-generator.js";
+import { isMissingTableError } from "../deeplake-schema.js";
 
 const USAGE = `
 hivemind tasks — manage personal + team tasks
@@ -253,7 +254,15 @@ export async function runTasksCommand(args: string[]): Promise<void> {
   const cfg = requireConfig();
   const api = makeApi(cfg);
   const tableName = cfg.tasksTableName;
-  await api.ensureTasksTable(tableName);
+  // ensureTasksTable issues CREATE/ALTER/CREATE INDEX (DDL writes). Read-only
+  // subcommands (`list`, `report`) MUST NOT trigger DDL — a user without DDL
+  // privileges, or one running with HIVEMIND_CAPTURE=false, would otherwise
+  // fail before any SELECT could even run. Codex legacy audit caught this.
+  // Reads fall back to `isMissingTableError` handling at the query call site.
+  const WRITE_SUBS = new Set(["add", "edit", "done", "assign", "progress"]);
+  if (WRITE_SUBS.has(sub)) {
+    await api.ensureTasksTable(tableName);
+  }
   const pluginVersion = getVersion();
 
   if (sub === "add") {
@@ -291,12 +300,22 @@ export async function runTasksCommand(args: string[]): Promise<void> {
     const scope = parseScopeFilter(args.slice(1));
     const status = parseStatus(args.slice(1));
     const limit = parseLimit(args.slice(1));
-    const rows = await listTasks(api.query.bind(api), tableName, {
-      scope,
-      status,
-      current_user: cfg.userName,
-      limit,
-    });
+    let rows: TaskRow[] = [];
+    try {
+      rows = await listTasks(api.query.bind(api), tableName, {
+        scope,
+        status,
+        current_user: cfg.userName,
+        limit,
+      });
+    } catch (err) {
+      // Missing-table = legacy/fresh-install state. Show empty-state
+      // instead of crashing. Real errors (network, auth, etc.) still
+      // propagate. Codex legacy audit caught the unconditional
+      // ensureTasksTable that previously hid this branch.
+      const msg = (err as Error).message;
+      if (!isMissingTableError(msg)) throw err;
+    }
     if (rows.length === 0) {
       console.log(`(no tasks with scope=${scope} status=${status})`);
       return;
@@ -471,25 +490,36 @@ export async function runTasksCommand(args: string[]): Promise<void> {
     // positional we focus to that one row; without, we mirror the
     // default `list` scope (--mine + active) so `report` answers
     // "what's MY progress?" by default.
+    //
+    // Report is read-only: missing tasks OR events table = legacy
+    // / fresh-install state. Show empty-state instead of DDL writes.
+    // Codex legacy audit caught the prior unconditional ensure*Table
+    // that turned `report` into a schema writer.
     const positional = stripKnownFlags(args.slice(1));
     const targetTaskId = positional[0];
 
-    let tasksToReport: TaskRow[];
-    if (targetTaskId) {
-      const one = await getTaskLatest(api.query.bind(api), tableName, targetTaskId);
-      if (!one) {
-        console.error(`Task not found: ${targetTaskId}`);
-        process.exit(1);
-        throw new Error("unreachable");
+    let tasksToReport: TaskRow[] = [];
+    try {
+      if (targetTaskId) {
+        const one = await getTaskLatest(api.query.bind(api), tableName, targetTaskId);
+        if (!one) {
+          console.error(`Task not found: ${targetTaskId}`);
+          process.exit(1);
+          throw new Error("unreachable");
+        }
+        tasksToReport = [one];
+      } else {
+        tasksToReport = await listTasks(api.query.bind(api), tableName, {
+          scope: "mine",
+          status: "active",
+          current_user: cfg.userName,
+          limit: 50, // report is the dive-deep view; allow a higher cap than list's 10
+        });
       }
-      tasksToReport = [one];
-    } else {
-      tasksToReport = await listTasks(api.query.bind(api), tableName, {
-        scope: "mine",
-        status: "active",
-        current_user: cfg.userName,
-        limit: 50, // report is the dive-deep view; allow a higher cap than list's 10
-      });
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (!isMissingTableError(msg)) throw err;
+      // tasks table doesn't exist yet → empty report.
     }
 
     if (tasksToReport.length === 0) {
@@ -497,30 +527,31 @@ export async function runTasksCommand(args: string[]): Promise<void> {
       return;
     }
 
-    // Ensure the events table exists before any aggregate query. On a
-    // fresh install nothing has created task_events yet (auto-extract
-    // and `tasks progress` lazy-create on first INSERT, but report is
-    // SELECT-only and would otherwise fail with "table does not
-    // exist" before the kpis-length check could short-circuit).
-    // Pre-ensure once at the top so the per-task SELECT loop never
-    // touches that branch. Codex review on T5 surfaced this.
-    await api.ensureTaskEventsTable(cfg.taskEventsTableName);
-
     // Per-task: render KPI lines from the events stream. Tasks with
     // no KPIs short-circuit BEFORE the aggregate query — saves a
     // round-trip and surfaces the "T4 plugs LLM generation" hint
-    // even when the events table is brand-new.
+    // even when the events table is brand-new. The aggregate itself
+    // is best-effort: a missing task_events table is the legacy
+    // state — show 0/target rather than DDL-creating the table on a
+    // read path.
     for (const task of tasksToReport) {
       console.log(formatListRow(task));
       if (task.kpis.length === 0) {
         console.log("    (no KPIs defined yet — T4 will plug LLM generation)");
         continue;
       }
-      const totals = await computeAllForTask(
-        api.query.bind(api),
-        cfg.taskEventsTableName,
-        task.task_id,
-      );
+      let totals: Record<string, number> = {};
+      try {
+        totals = await computeAllForTask(
+          api.query.bind(api),
+          cfg.taskEventsTableName,
+          task.task_id,
+        );
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (!isMissingTableError(msg)) throw err;
+        // events table missing → 0/target everywhere.
+      }
       for (const k of task.kpis) {
         const current = totals[k.kpi_id] ?? 0;
         console.log(`    - ${k.name}: ${current}/${k.target} ${k.unit}`);

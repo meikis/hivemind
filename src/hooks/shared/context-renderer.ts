@@ -174,19 +174,33 @@ export async function renderContextBlock(
  * Merge team-scope and me-scope task results into a single deduped
  * list sorted newest-first by created_at. The two listTasks calls
  * may return the same task_id (a team task assigned to current user
- * shows up in both); the first occurrence wins.
+ * shows up in both).
+ *
+ * On collision the HIGHEST-VERSION row wins (codex legacy audit:
+ * the team query fires first, then mine; if a task is edited
+ * between the two queries, mine sees the newer version. Keeping the
+ * older team-side copy would inject stale text/KPIs into the
+ * SessionStart context). Ties on version break by newer
+ * created_at — same tie-break as listRules / listTasks.
  */
 function mergeAndDedupTasks(
   teamTasks: import("../../tasks/index.js").TaskRow[],
   myTasks: import("../../tasks/index.js").TaskRow[],
 ): import("../../tasks/index.js").TaskRow[] {
-  const seen = new Set<string>();
-  const merged: import("../../tasks/index.js").TaskRow[] = [];
+  const winner = new Map<string, import("../../tasks/index.js").TaskRow>();
   for (const t of [...teamTasks, ...myTasks]) {
-    if (seen.has(t.task_id)) continue;
-    seen.add(t.task_id);
-    merged.push(t);
+    const prev = winner.get(t.task_id);
+    if (!prev) {
+      winner.set(t.task_id, t);
+      continue;
+    }
+    if (t.version > prev.version) {
+      winner.set(t.task_id, t);
+    } else if (t.version === prev.version && t.created_at > prev.created_at) {
+      winner.set(t.task_id, t);
+    }
   }
+  const merged = [...winner.values()];
   merged.sort((a, b) => b.created_at.localeCompare(a.created_at));
   return merged;
 }

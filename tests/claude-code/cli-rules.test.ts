@@ -353,15 +353,29 @@ describe("runRulesCommand — done", () => {
 // ── ensureRulesTable wiring ─────────────────────────────────────────────────
 
 describe("runRulesCommand — schema bootstrap", () => {
-  it("calls ensureRulesTable exactly once with the configured table name on every non-help invocation", async () => {
-    await runRulesCommand(["list"]);
+  it("calls ensureRulesTable exactly once on a WRITE invocation (codex legacy audit: read-only no longer ensures)", async () => {
+    await runRulesCommand(["add", "rule"]);
     expect(ensureRulesTableMock).toHaveBeenCalledTimes(1);
     expect(ensureRulesTableMock).toHaveBeenCalledWith("hivemind_rules");
   });
 
-  it("honors HIVEMIND_RULES_TABLE override via cfg.rulesTableName", async () => {
+  it("does NOT call ensureRulesTable on `list` (read-only — codex legacy audit P2)", async () => {
     loadConfigMock.mockReturnValueOnce({ ...VALID_CONFIG, rulesTableName: "rules_test" });
     await runRulesCommand(["list"]);
-    expect(ensureRulesTableMock).toHaveBeenCalledWith("rules_test");
+    // list is read-only → no DDL writes.
+    expect(ensureRulesTableMock).not.toHaveBeenCalled();
+  });
+
+  it("calls ensureRulesTable on `add` (write — DDL needed)", async () => {
+    await runRulesCommand(["add", "some rule text"]);
+    expect(ensureRulesTableMock).toHaveBeenCalledTimes(1);
+    expect(ensureRulesTableMock).toHaveBeenCalledWith("hivemind_rules");
+  });
+
+  it("`list` against MISSING table shows empty state (legacy users)", async () => {
+    queryMock.mockReset().mockRejectedValueOnce(new Error(`Table does not exist: relation "hivemind_rules" does not exist`));
+    await runRulesCommand(["list"]);
+    expect(logged.some(l => l.includes("(no rules with status=active)"))).toBe(true);
+    expect(ensureRulesTableMock).not.toHaveBeenCalled();
   });
 });
