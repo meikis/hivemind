@@ -25,7 +25,7 @@
  * lifetime and exit. No daemon, no PID file, no cross-platform issues.
  */
 
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -110,18 +110,26 @@ export function decideGate(ctx: GateContext): GateDecision {
  * Returns the count of source files that changed between commit `from` and
  * commit `to`. Returns 0 on any git error (treat as "no change" for safety —
  * better to skip a build we should have done than to spin on a broken repo).
+ *
+ * Uses execFileSync with an argv array (not a shell command string) so the
+ * globs are passed directly to git without shell quoting — critical on
+ * Windows cmd.exe where single quotes are NOT quoting syntax and would
+ * otherwise be treated as literal characters in the pathspec.
  */
 function countSourceDiff(cwd: string, from: string | null, to: string): number {
   // If `from` is null, we can't diff; treat as "everything changed" so we
   // rebuild from scratch. This pairs with the "first build" branch above.
   if (from === null) return 1;
   try {
-    const args = ["diff", "--name-only", `${from}..${to}`, "--"];
-    const out = execSync(`git ${args.join(" ")} ${SOURCE_GLOBS.map((g) => `'${g}'`).join(" ")}`, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const out = execFileSync(
+      "git",
+      ["diff", "--name-only", `${from}..${to}`, "--", ...SOURCE_GLOBS],
+      {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
     return out === "" ? 0 : out.split("\n").length;
   } catch {
     return 0;
@@ -130,7 +138,7 @@ function countSourceDiff(cwd: string, from: string | null, to: string): number {
 
 function readGitCommit(cwd: string): string | null {
   try {
-    return execSync("git rev-parse HEAD", {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
