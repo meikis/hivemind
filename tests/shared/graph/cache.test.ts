@@ -169,9 +169,8 @@ describe("cache — read/write roundtrip", () => {
 
   it("returns null when array items have non-string id/source/target (codex P1 fix)", () => {
     // The shape passes the array-typeof check but per-item fields are wrong
-    // (numbers instead of strings). Without the try/catch in readCache,
-    // rewriteSourceFile throws when calling .startsWith on a number → the
-    // build loop interprets that as "skip this file" instead of cache-miss.
+    // (numbers instead of strings). Without per-item validation, the
+    // same-path early-return in rewriteSourceFile would let this through.
     const sha = "deadbeef";
     const path = cachePath(baseDir, sha);
     require("node:fs").mkdirSync(cacheDir(baseDir), { recursive: true });
@@ -185,6 +184,40 @@ describe("cache — read/write roundtrip", () => {
           language: "typescript",
           nodes: [{ id: 1, source_file: "src/foo.ts" }],
           edges: [{ source: null, target: undefined }],
+          parse_errors: [],
+        },
+      }),
+    );
+    expect(readCache(baseDir, sha, "src/foo.ts")).toBeNull();
+  });
+
+  it("returns null when items have valid id/source but malformed secondary fields (codex P1 followup)", () => {
+    // A subtler corruption: id is a string (passes the minimum check) but
+    // label, kind, source_location, etc. are wrong types. On a same-path
+    // call rewriteSourceFile would silently return this and downstream
+    // consumers would crash on n.label.toLowerCase(), e.relation === "...", etc.
+    const sha = "deadbeef";
+    const path = cachePath(baseDir, sha);
+    require("node:fs").mkdirSync(cacheDir(baseDir), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({
+        schema: CACHE_SCHEMA_VERSION,
+        content_sha256: sha,
+        extraction: {
+          source_file: "src/foo.ts",
+          language: "typescript",
+          // id + source_file are correct strings; everything else is wrong type
+          nodes: [{
+            id: "src/foo.ts:foo:function",
+            label: 1,           // should be string
+            kind: null,         // should be string
+            source_file: "src/foo.ts",
+            source_location: 2, // should be string
+            language: "typescript",
+            exported: "yes",    // should be boolean
+          }],
+          edges: [],
           parse_errors: [],
         },
       }),

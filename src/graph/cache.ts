@@ -127,22 +127,45 @@ export function readCache(
 }
 
 /**
- * Verify every node/edge/parse_error item has the string fields we rely on.
- * Returns true when the extraction is safe to consume; false otherwise.
+ * Verify every required FileExtraction field has the right type. Returns
+ * true when the extraction is safe to consume; false otherwise.
+ *
+ * Validation is structural — we DON'T constrain enum values (kind, relation,
+ * confidence, language) to today's union members because adding a new
+ * value should not silently fail the cache for future-extracted entries;
+ * that's what CACHE_SCHEMA_VERSION is for. We DO verify the field is a
+ * string (the only enum type we use) so downstream string ops are safe.
+ *
+ * Same-path early-return in rewriteSourceFile means corrupt items would
+ * otherwise slip through and crash downstream consumers; validateItems
+ * runs unconditionally so the no-op path is also guarded.
  */
 function validateItems(ex: FileExtraction): boolean {
   if (typeof ex.source_file !== "string") return false;
+  if (typeof ex.language !== "string") return false;
   for (const n of ex.nodes) {
     if (n === null || typeof n !== "object") return false;
-    if (typeof n.id !== "string" || typeof n.source_file !== "string") return false;
+    if (typeof n.id !== "string") return false;
+    if (typeof n.label !== "string") return false;
+    if (typeof n.kind !== "string") return false;
+    if (typeof n.source_file !== "string") return false;
+    if (typeof n.source_location !== "string") return false;
+    if (typeof n.language !== "string") return false;
+    if (typeof n.exported !== "boolean") return false;
   }
   for (const e of ex.edges) {
     if (e === null || typeof e !== "object") return false;
-    if (typeof e.source !== "string" || typeof e.target !== "string") return false;
+    if (typeof e.source !== "string") return false;
+    if (typeof e.target !== "string") return false;
+    if (typeof e.relation !== "string") return false;
+    if (typeof e.confidence !== "string") return false;
+    if (e.ord !== undefined && typeof e.ord !== "number") return false;
   }
   for (const p of ex.parse_errors) {
     if (p === null || typeof p !== "object") return false;
     if (typeof p.source_file !== "string") return false;
+    if (typeof p.message !== "string") return false;
+    if (p.location !== undefined && typeof p.location !== "string") return false;
   }
   return true;
 }
