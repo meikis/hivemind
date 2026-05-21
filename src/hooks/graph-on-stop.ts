@@ -51,9 +51,10 @@ import { isDirectRun } from "../utils/direct-run.js";
 import { deriveProjectKey } from "../utils/repo-identity.js";
 
 /**
- * How long between auto-rebuilds. The first Stop after this interval AND
- * after a commit-with-source-changes is the one that fires the build. All
- * others skip. Override via HIVEMIND_GRAPH_TICK_INTERVAL_MS for tests.
+ * How long between auto-rebuilds. The first SessionEnd after this interval
+ * AND after a commit-with-source-changes is the one that fires the build.
+ * Earlier SessionEnds within the window skip the build. Override via
+ * HIVEMIND_GRAPH_TICK_INTERVAL_MS for tests.
  */
 function tickIntervalMs(): number {
   const raw = process.env.HIVEMIND_GRAPH_TICK_INTERVAL_MS;
@@ -95,8 +96,8 @@ export function decideGate(ctx: GateContext): GateDecision {
 
   if (last === null) {
     // Never built before: fire so the user gets an initial snapshot.
-    // The build itself will populate .last-build.json so subsequent Stops
-    // see a non-null entry.
+    // The build itself will populate .last-build.json so subsequent
+    // SessionEnd invocations see a non-null entry.
     return { fire: true, reason: "first build (no prior .last-build.json)" };
   }
 

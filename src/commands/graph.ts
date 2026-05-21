@@ -44,7 +44,7 @@ Usage:
       Walk the project for TypeScript source files, extract symbols + edges,
       and write a snapshot to ~/.hivemind/graphs/<repo-key>/snapshots/<commit-sha>.json.
       Also updates ~/.hivemind/graphs/<repo-key>/latest-commit.txt and the
-      per-repo .last-build.json (consumed by the Stop-hook auto-build).
+      per-repo .last-build.json (consumed by the SessionEnd auto-build hook).
 
   hivemind graph diff <sha1> <sha2> [--cwd <path>] [--json] [--limit N]
       Diff two snapshots by their git commit SHA. Prints added/removed
