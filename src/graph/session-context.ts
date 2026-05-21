@@ -8,7 +8,21 @@
  * Hot-path constraint: SessionStart inject runs on EVERY session start. We
  * cannot afford to parse the ~1 MB snapshot JSON here. Instead we read the
  * small `.last-build.json` file (single small read, fields already populated
- * by writeSnapshot). Total cost: ~1 ms.
+ * by writeSnapshot).
+ *
+ * Real cost: low-single-digit milliseconds, NOT sub-millisecond. The
+ * dominant term is deriveProjectKey() which shells out to `git config --get
+ * remote.origin.url`; the .last-build.json read itself is sub-ms. The git
+ * call is already paid by the graph-on-stop hook on the same SessionStart,
+ * so the marginal cost here is negligible.
+ *
+ * Tampered-file defence: `commit_sha` and `snapshot_sha256` are validated
+ * as hex by readLastBuild (see src/graph/last-build.ts). Without that
+ * validation, an attacker who writes a shape-valid .last-build.json with
+ * embedded newlines into `commit_sha` could inject text directly into the
+ * system prompt, or escape the snapshots/ dir via "../" in either hash.
+ * Both vectors are closed at the parser, not here — but we still defensively
+ * truncate when rendering.
  *
  * Honest scope hints in the inject text:
  *   - "TypeScript only" — Phase 1 limitation, makes Claude not waste a Read
@@ -62,6 +76,17 @@ export function graphContextLine(cwd: string, deps: GraphContextDeps = {}): stri
   const last = readLastBuild(baseDir);
   if (last === null) return null;
 
+  // Prompt-injection / path-traversal defence. commit_sha and snapshot_sha256
+  // are interpolated into both the system-prompt text and into the displayed
+  // filesystem path. A tampered .last-build.json with a shape-valid but
+  // content-invalid hash could embed newlines into the prompt or "../" into
+  // the path. Reject the inject (silently drop — caller falls back to no
+  // graph hint) rather than render attacker-controlled bytes. The canonical
+  // writer in snapshot.ts always emits 40-char + 64-char hex, so legitimate
+  // files always pass.
+  if (last.commit_sha !== null && !/^[0-9a-f]{4,64}$/.test(last.commit_sha)) return null;
+  if (!/^[0-9a-f]{64}$/.test(last.snapshot_sha256)) return null;
+
   const now = (deps.now ?? Date.now)();
   const ageMs = Math.max(0, now - last.ts);
 
@@ -74,6 +99,30 @@ export function graphContextLine(cwd: string, deps: GraphContextDeps = {}): stri
   const snapshotFile = last.commit_sha ?? last.snapshot_sha256;
   const snapshotPath = join(snapshotsDir, `${snapshotFile}.json`);
 
+  // Staleness escalation. The original phrasing ("may lag by up to the
+  // auto-rebuild interval") was misleading — auto-rebuilds can fail or be
+  // disabled and the age can grow to days. Surface the risk in proportion
+  // to the age so the model under-trusts old data:
+  //   < 1 hour:  no special warning beyond the age line
+  //   1h .. 1d:  "may be out of date — verify if you've edited recently"
+  //   > 1 day:   "STALE — likely out of date; prefer reading current source"
+  const STALE_WARN_MS = 60 * 60 * 1000;       // 1 hour
+  const STALE_HARD_MS = 24 * 60 * 60 * 1000;  // 1 day
+  let staleness: string;
+  if (ageMs >= STALE_HARD_MS) {
+    staleness =
+      "  ⚠️ STALE: this snapshot is over a day old; the auto-rebuild may have stopped.\n" +
+      "     Prefer reading current source for any file you suspect has changed.";
+  } else if (ageMs >= STALE_WARN_MS) {
+    staleness =
+      "  ⚠️ Possibly out of date (> 1h since last build). For any file you've edited\n" +
+      "     in this session, fall back to reading the live source instead of the graph.";
+  } else {
+    staleness =
+      "  Freshness: auto-rebuilds run on Stop/SessionEnd; if a file's mtime is newer\n" +
+      "  than the build timestamp above, prefer reading the live source for that file.";
+  }
+
   return [
     "",
     "LOCAL CODE GRAPH (TypeScript only, AST-based):",
@@ -82,8 +131,8 @@ export function graphContextLine(cwd: string, deps: GraphContextDeps = {}): stri
     "  For code-structure questions ('what calls X?', 'what imports Y?',",
     "  'what does Z depend on?'), read the snapshot JSON directly — it's",
     "  faster than grepping the tree and gives complete call/import/ref edges.",
-    "  Limitations: TypeScript-only, AST-only (no semantic-similarity edges yet),",
-    `  and may lag the working copy by up to the auto-rebuild interval.`,
+    "  Limitations: TypeScript-only, AST-only (no semantic-similarity edges yet).",
+    staleness,
   ].join("\n");
 }
 

@@ -82,6 +82,11 @@ export function readLastBuild(baseDir: string): LastBuildState | null {
   if (typeof o.ts !== "number") return null;
   if (o.commit_sha !== null && typeof o.commit_sha !== "string") return null;
   if (typeof o.snapshot_sha256 !== "string") return null;
+  // Note: hash *shape* is NOT validated here. The gate hook
+  // (src/hooks/graph-on-stop.ts) only compares commit_sha for equality and
+  // doesn't care if it's hex. Strict hash validation belongs at the
+  // SessionStart inject boundary (src/graph/session-context.ts) where the
+  // string actually flows into the model's system prompt.
   const out: LastBuildState = { ts: o.ts, commit_sha: o.commit_sha, snapshot_sha256: o.snapshot_sha256 };
   // Optional counts: accept finite non-negative numbers, drop anything else.
   if (typeof o.node_count === "number" && Number.isFinite(o.node_count) && o.node_count >= 0) {
