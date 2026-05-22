@@ -66,12 +66,13 @@ describe("pickPrimaryBanner — welcome (default when savings ≤ 1M)", () => {
     expect(n!.dedupKey).toEqual({ session: "s-1" });
   });
 
-  it("renders welcome when org-stats present but savings < 1M", async () => {
-    // 5M bytes → Y = 1.25M tokens → Z = 0.7 × 1.25M = 0.875M tokens
-    // → below the 1M threshold, so welcome wins
+  it("renders welcome when org-stats present but savings < 1k", async () => {
+    // 4k bytes → Y = 1000 tokens → Z = 0.7 × 1000 = 700 tokens
+    // → below the 1k threshold, so welcome still wins for brand-new
+    // teams whose cumulative bytes haven't crossed even the lowered bar.
     orgStatsMock.mockResolvedValue({
-      org:  { sessionsCount: 100, memoryRecallCount: 1000, memorySearchBytes: 5_000_000 },
-      user: { sessionsCount: 10,  memoryRecallCount: 50,   memorySearchBytes: 500_000 },
+      org:  { sessionsCount: 2, memoryRecallCount: 1, memorySearchBytes: 4_000 },
+      user: { sessionsCount: 1, memoryRecallCount: 1, memorySearchBytes: 4_000 },
     });
     const n = await pickPrimaryBanner("s-edge", FRESH_CREDS);
     expect(n!.id).toBe("welcome");
@@ -105,8 +106,8 @@ describe("pickPrimaryBanner — welcome (default when savings ≤ 1M)", () => {
   });
 });
 
-describe("pickPrimaryBanner — savings recap (when org savings > 1M)", () => {
-  it("renders online savings recap when org tokens-saved > 1M", async () => {
+describe("pickPrimaryBanner — savings recap (when org savings > 1k)", () => {
+  it("renders online savings recap when org tokens-saved > 1k", async () => {
     // 6M bytes → Y = 1.5M tokens → Z = 0.7 × 1.5M = 1.05M → above 1M threshold
     orgStatsMock.mockResolvedValue({
       org:  { sessionsCount: 187, memoryRecallCount: 42000, memorySearchBytes: 6_000_000 },
@@ -143,7 +144,7 @@ describe("pickPrimaryBanner — savings recap (when org savings > 1M)", () => {
     expect(n!.body).toContain("you contributed");
   });
 
-  it("renders OFFLINE savings recap when org-stats is null but local jsonl > 1M tokens", async () => {
+  it("renders OFFLINE savings recap when org-stats is null but local jsonl > 1k tokens", async () => {
     // 6M local bytes → Z = 1.05M tokens → above threshold
     appendUsageRecord({
       endedAt: "2026-05-18T00:00:00Z",
@@ -157,6 +158,125 @@ describe("pickPrimaryBanner — savings recap (when org savings > 1M)", () => {
     expect(n!.title).toContain("saved you ~"); // "you", not "your team"
     expect(n!.body).toContain("1 session");
     expect(n!.body).toContain("200 memory searches");
+  });
+
+  // The ONLINE recap pluralizes recall/session at lines 167-168 of
+  // primary-banner.ts. The happy-path test above uses 42_000 / 187, which
+  // only exercises the plural branch. This guards the singular path so a
+  // future refactor that breaks "1 recall" / "1 session" rendering fails
+  // here instead of slipping through coverage. Also exercises the
+  // singular "1 skill generated" form via a single seeded skill dir, and
+  // the `skillsGenerated > 0` path which the other tests don't trigger
+  // (their tmp HOME has no .claude/skills dir at all).
+  it("renders singular recall/session/skill when counts are exactly 1", async () => {
+    // One skill dir owned by FRESH_CREDS.userName ("ada"). The function
+    // matches `--<userName>` suffix, so naming the dir `something--ada`
+    // makes countUserGeneratedSkills return 1.
+    mkdirSync(join(TEMP_HOME, ".claude", "skills", "demo-skill--ada"), { recursive: true });
+
+    orgStatsMock.mockResolvedValue({
+      org:  { sessionsCount: 1, memoryRecallCount: 1, memorySearchBytes: 6_000_000 },
+      user: { sessionsCount: 1, memoryRecallCount: 1, memorySearchBytes: 4_000 },
+    });
+    const n = await pickPrimaryBanner("s-1", FRESH_CREDS);
+    expect(n!.id).toBe("savings-recap");
+    expect(n!.body).toContain("1 memory recall");
+    expect(n!.body).not.toContain("1 memory recalls");
+    expect(n!.body).toContain("across 1 session");
+    expect(n!.body).not.toContain("across 1 sessions");
+    expect(n!.body).toContain("1 skill generated");
+    expect(n!.body).not.toContain("1 skills generated");
+  });
+
+  // Counterpart to the singular case: with 3 seeded skill dirs the body
+  // must say "3 skills" (plural). Guards the skillsGenerated === 1 ?
+  // "skill" : "skills" branch on the > 1 side, which no test exercises
+  // explicitly because the other recap tests have 0 skill dirs.
+  it("renders plural skills when more than one skill is generated", async () => {
+    for (const name of ["a--ada", "b--ada", "c--ada"]) {
+      mkdirSync(join(TEMP_HOME, ".claude", "skills", name), { recursive: true });
+    }
+    orgStatsMock.mockResolvedValue({
+      org:  { sessionsCount: 5, memoryRecallCount: 5, memorySearchBytes: 6_000_000 },
+      user: { sessionsCount: 1, memoryRecallCount: 1, memorySearchBytes: 4_000 },
+    });
+    const n = await pickPrimaryBanner("s-1", FRESH_CREDS);
+    expect(n!.body).toContain("3 skills generated");
+  });
+
+  // OFFLINE counterpart: the existing offline test has sessionCount=1
+  // (singular path) and memorySearchCount=200 (plural). This adds the
+  // mirror case so both branches at lines 210/211 of primary-banner.ts
+  // are covered.
+  it("OFFLINE renders plural sessions and singular memory search", async () => {
+    appendUsageRecord({
+      endedAt: "2026-05-18T00:00:00Z",
+      sessionId: "s-A",
+      memorySearchBytes: 3_500_000,
+      memorySearchCount: 1,
+    });
+    appendUsageRecord({
+      endedAt: "2026-05-18T01:00:00Z",
+      sessionId: "s-B",
+      memorySearchBytes: 3_500_000,
+      memorySearchCount: 0,
+    });
+    orgStatsMock.mockResolvedValue(null);
+    const n = await pickPrimaryBanner("s-1", FRESH_CREDS);
+    expect(n!.id).toBe("savings-recap");
+    expect(n!.body).toContain("2 sessions");
+    expect(n!.body).toContain("1 memory search");
+    expect(n!.body).not.toContain("1 memory searches");
+  });
+
+  // Offline + skills > 0 path (lines 213-214 of primary-banner.ts).
+  // The other offline test seeds no .claude/skills dir so the if-gate
+  // stays false. Singular-skill flavor here.
+  it("OFFLINE includes skill segment when exactly 1 skill is generated", async () => {
+    mkdirSync(join(TEMP_HOME, ".claude", "skills", "demo--ada"), { recursive: true });
+    appendUsageRecord({
+      endedAt: "2026-05-18T00:00:00Z",
+      sessionId: "s-skills-1",
+      memorySearchBytes: 6_000_000,
+      memorySearchCount: 10,
+    });
+    orgStatsMock.mockResolvedValue(null);
+    const n = await pickPrimaryBanner("s-1", FRESH_CREDS);
+    expect(n!.id).toBe("savings-recap");
+    expect(n!.body).toContain("1 skill generated");
+    expect(n!.body).not.toContain("1 skills generated");
+  });
+
+  // Offline + skills > 1 (plural side of the skillsGenerated === 1 ternary
+  // at line 214). Pairs with the singular test above to lock both arms.
+  it("OFFLINE renders plural skills when more than one skill is generated", async () => {
+    for (const name of ["a--ada", "b--ada", "c--ada", "d--ada"]) {
+      mkdirSync(join(TEMP_HOME, ".claude", "skills", name), { recursive: true });
+    }
+    appendUsageRecord({
+      endedAt: "2026-05-18T00:00:00Z",
+      sessionId: "s-skills-many",
+      memorySearchBytes: 6_000_000,
+      memorySearchCount: 10,
+    });
+    orgStatsMock.mockResolvedValue(null);
+    const n = await pickPrimaryBanner("s-1", FRESH_CREDS);
+    expect(n!.body).toContain("4 skills generated");
+  });
+
+  // Online with skills missing (lines 180 false branch): existing tests
+  // never explicitly assert the "no skill segment" path even though most
+  // of them implicitly hit it (HOME tmp dir has no .claude/skills).
+  // Pinning it down here so a refactor that always appends the segment
+  // would fail loudly instead of silently.
+  it("renders no skill segment when no skills are generated", async () => {
+    orgStatsMock.mockResolvedValue({
+      org:  { sessionsCount: 5, memoryRecallCount: 5, memorySearchBytes: 6_000_000 },
+      user: { sessionsCount: 1, memoryRecallCount: 1, memorySearchBytes: 4_000 },
+    });
+    const n = await pickPrimaryBanner("s-1", FRESH_CREDS);
+    expect(n!.body).not.toContain("skill");
+    expect(n!.body).not.toContain("skills");
   });
 });
 

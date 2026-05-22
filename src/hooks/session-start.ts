@@ -21,6 +21,7 @@ import { autoUpdate } from "./shared/autoupdate.js";
 import { autoPullSkills } from "../skillify/auto-pull.js";
 import { renderSkillifyCommands } from "../cli/skillify-spec.js";
 import { countLocalManifestEntries } from "../skillify/local-manifest.js";
+import { renderLocalMinedNote } from "../skillify/local-mined-banner.js";
 import { maybeAutoMineLocal } from "../skillify/spawn-mine-local-worker.js";
 import { graphContextLine } from "../graph/session-context.js";
 import { spawnGraphPullWorker } from "../graph/spawn-pull-worker.js";
@@ -217,14 +218,19 @@ async function main(): Promise<void> {
   // No placeholder substitution needed — inject uses bare `hivemind <sub>` form.
   const resolvedContext = context;
   // When the user hasn't signed in but has mined skills locally with
-  // `hivemind skillify mine-local`, surface the count so the model can
-  // mention the next sharing step. Stays empty (and silent) when no
-  // manifest exists, so first-time non-mined users don't see an
-  // unhelpful "0 skills" line.
+  // `hivemind skillify mine-local`, surface a count + sign-in CTA in
+  // the model-visible context. The rich concrete-insight banner is
+  // delivered on the user-visible systemMessage channel by the
+  // notifications rule (src/notifications/rules/local-mined.ts) — it
+  // is intentionally NOT rendered here because `insight` originates
+  // from haiku's gate output and feeding LLM-derived prose back into
+  // `additionalContext` is a prompt-injection vector (codex P1).
+  // Take the refactored helper from main (renderLocalMinedNote) AND the
+  // graph-bridge wiring from this branch. The helper supersedes the
+  // inline string construction; the graph spawn + inject append remain.
   const localMined = countLocalManifestEntries();
-  const localMinedNote = localMined > 0
-    ? `\n\n${localMined} local skill${localMined === 1 ? "" : "s"} from past 'hivemind skillify mine-local' run(s) live in ~/.claude/skills/. Run 'hivemind login' to start sharing new mining results with your team.`
-    : "";
+  const localMinedNote = renderLocalMinedNote({ totalCount: localMined });
+
   // Local code graph context (Phase 3 v1.1). Cheap: reads ~/.hivemind/...
   // /.last-build.json (small file populated by writeSnapshot) — never opens
   // the ~1 MB snapshot. Returns null when no graph exists for this repo, in
