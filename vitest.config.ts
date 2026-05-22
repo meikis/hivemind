@@ -380,25 +380,26 @@ export default defineConfig({
         // because normalizeGitRemoteUrl has many regex alternation branches
         // (SCP form, default-port stripping for 4 schemes, trailing-slash
         // variants); the happy-path canonicalization output is covered.
-        // Per-file thresholds calibrated to current coverage. The CodeRabbit
-        // batch B + C cycles added defensive branches (schema validation,
-        // path-traversal guards, error-coercion helpers, dispatcher arms)
-        // faster than the test surface could grow — the gate would otherwise
-        // block merge on quality of life additions. Targeted follow-up tests
-        // for the heaviest gaps (graph-on-stop, build-lock recovery,
-        // typescript extractor cross-file resolution) are tracked as v1.1
-        // work items. CI thresholds tightened back as those land.
+        // Per-file thresholds calibrated to current coverage after the
+        // batch-D targeted-test push:
+        //   - graph-on-stop.ts went 44% → 89% with the new main() orchestration
+        //     tests (mocked deps for runBuildCommand + lock helpers)
+        //   - build-lock.ts gained owner-gated release tests
+        //   - diff.ts gained schema-validation tests for loadSnapshotByCommit
+        // The few remaining gaps (commands/graph.ts dispatcher arms in
+        // edge-error branches, cache.ts module-label rewrite branch) are
+        // documented as v1.1 follow-ups.
         "src/graph/extract/typescript.ts":   { statements: 89, branches: 65, functions: 90, lines: 89 },
         "src/graph/snapshot.ts":             { statements: 90, branches: 85, functions: 90, lines: 90 },
-        "src/graph/cache.ts":                { statements: 75, branches: 70, functions: 90, lines: 75 },
-        "src/graph/build-lock.ts":           { statements: 70, branches: 40, functions: 70, lines: 70 },
-        "src/graph/deeplake-push.ts":        { statements: 85, branches: 75, functions: 80, lines: 85 },
-        "src/graph/diff.ts":                 { statements: 75, branches: 50, functions: 85, lines: 80 },
+        "src/graph/cache.ts":                { statements: 75, branches: 70, functions: 90, lines: 90 },
+        "src/graph/build-lock.ts":           { statements: 75, branches: 55, functions: 90, lines: 70 },
+        "src/graph/deeplake-push.ts":        { statements: 90, branches: 85, functions: 90, lines: 90 },
+        "src/graph/diff.ts":                 { statements: 80, branches: 55, functions: 85, lines: 80 },
         "src/graph/git-hook-install.ts":     { statements: 85, branches: 75, functions: 90, lines: 85 },
         "src/graph/history.ts":              { statements: 85, branches: 75, functions: 90, lines: 90 },
         "src/graph/last-build.ts":           { statements: 90, branches: 80, functions: 90, lines: 90 },
-        "src/hooks/graph-on-stop.ts":        { statements: 40, branches: 40, functions: 45, lines: 45 },
-        "src/commands/graph.ts":             { statements: 60, branches: 50, functions: 85, lines: 60 },
+        "src/hooks/graph-on-stop.ts":        { statements: 85, branches: 70, functions: 85, lines: 85 },
+        "src/commands/graph.ts":             { statements: 65, branches: 55, functions: 90, lines: 65 },
         "src/utils/repo-identity.ts":        { statements: 85, branches: 50, functions: 90, lines: 90 },
       },
     },

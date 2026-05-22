@@ -152,6 +152,45 @@ describe("loadSnapshotByCommit — disk I/O", () => {
     // Non-hex characters rejected even at the right length
     expect(loadSnapshotByCommit(baseDir, "ZZZZ")).toBeNull();
   });
+
+  it("CodeRabbit P1: rejects parseable JSON that lacks nodes/links arrays", () => {
+    // A file that parses as JSON but isn't a valid GraphSnapshot. Without
+    // the schema guard, diffSnapshots would throw downstream.
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(join(baseDir, "snapshots", "cafebabe.json"), JSON.stringify({
+      directed: true, multigraph: true, graph: {}, observation: {},
+      // nodes / links MISSING
+    }));
+    expect(loadSnapshotByCommit(baseDir, "cafebabe")).toBeNull();
+  });
+
+  it("rejects payload where nodes is not an array", () => {
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(join(baseDir, "snapshots", "feedbabe.json"), JSON.stringify({
+      nodes: "not an array", links: [],
+    }));
+    expect(loadSnapshotByCommit(baseDir, "feedbabe")).toBeNull();
+  });
+
+  it("rejects payload where links is not an array", () => {
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(join(baseDir, "snapshots", "feedf00d.json"), JSON.stringify({
+      nodes: [], links: 42,
+    }));
+    expect(loadSnapshotByCommit(baseDir, "feedf00d")).toBeNull();
+  });
+
+  it("rejects parseable JSON that is null at the top level", () => {
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(join(baseDir, "snapshots", "bad0bad0.json"), "null");
+    expect(loadSnapshotByCommit(baseDir, "bad0bad0")).toBeNull();
+  });
+
+  it("rejects parseable JSON that is an array (not an object)", () => {
+    mkdirSync(join(baseDir, "snapshots"), { recursive: true });
+    writeFileSync(join(baseDir, "snapshots", "babafe11.json"), "[1, 2, 3]");
+    expect(loadSnapshotByCommit(baseDir, "babafe11")).toBeNull();
+  });
 });
 
 describe("runDiffCommand — CLI integration", () => {

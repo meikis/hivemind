@@ -189,12 +189,29 @@ function readGitCommit(cwd: string): string | null {
 }
 
 /**
+ * Test seam for main(): allows injecting runBuildCommand + lock helpers so
+ * tests can exercise the orchestration without touching real git state /
+ * spawning the bundled build. Production code wires the real
+ * implementations via the default parameter.
+ */
+export interface MainDeps {
+  runBuildCommand?: (args: string[]) => Promise<void>;
+  acquireBuildLock?: (baseDir: string) => { acquired: boolean; reason: string };
+  releaseBuildLock?: (baseDir: string) => void;
+  decideGate?: (ctx: GateContext) => GateDecision;
+}
+
+/**
  * Main entrypoint. Called from the bundled file. Reads minimal context from
  * the Claude Code stdin payload (cwd if provided, else process.cwd()).
  * Catches all errors and logs to .graph-on-stop.log so a hook bug never
  * crashes the user's session.
  */
-export async function main(): Promise<void> {
+export async function main(deps: MainDeps = {}): Promise<void> {
+  const runBuildFn = deps.runBuildCommand ?? runBuildCommand;
+  const acquireFn = deps.acquireBuildLock ?? acquireBuildLock;
+  const releaseFn = deps.releaseBuildLock ?? releaseBuildLock;
+  const gateFn = deps.decideGate ?? decideGate;
   // Disable switch for users / CI:
   //   HIVEMIND_GRAPH_ON_STOP=0   → no-op
   const envDisable = process.env.HIVEMIND_GRAPH_ON_STOP === "0";
@@ -209,7 +226,7 @@ export async function main(): Promise<void> {
 
   let decision: GateDecision;
   try {
-    decision = decideGate(ctx);
+    decision = gateFn(ctx);
   } catch (err) {
     logToFile(ctx.cwd, `decideGate threw: ${err instanceof Error ? err.message : String(err)}`);
     return;
@@ -224,7 +241,7 @@ export async function main(): Promise<void> {
   // the other logs SKIP-held-by-other and exits cheaply.
   const { key: repoKey } = deriveProjectKey(ctx.cwd);
   const baseDir = repoDir(repoKey);
-  const lock = acquireBuildLock(baseDir);
+  const lock = acquireFn(baseDir);
   if (!lock.acquired) {
     logToFile(ctx.cwd, `build skipped: lock ${lock.reason}`);
     return;
@@ -238,11 +255,11 @@ export async function main(): Promise<void> {
   // not "which underlying event"; both feed the same gate + lock so the
   // distinction is invisible to consumers.
   try {
-    await runBuildCommand(["--trigger", "session-end"]);
+    await runBuildFn(["--trigger", "session-end"]);
   } catch (err) {
     logToFile(ctx.cwd, `build threw: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
-    releaseBuildLock(baseDir);
+    releaseFn(baseDir);
   }
 }
 

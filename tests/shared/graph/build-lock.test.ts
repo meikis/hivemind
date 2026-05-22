@@ -114,4 +114,63 @@ describe("build-lock — acquire/release", () => {
     expect(r.reason).toBe("acquired");
     expect(existsSync(lockPath(baseDir))).toBe(true);
   });
+
+  // CodeRabbit P1 — owner-gated release.
+  describe("releaseBuildLock — owner-gated", () => {
+    it("release of OUR own lock unlinks the file", () => {
+      acquireBuildLock(baseDir);
+      expect(existsSync(lockPath(baseDir))).toBe(true);
+      releaseBuildLock(baseDir);
+      expect(existsSync(lockPath(baseDir))).toBe(false);
+    });
+
+    it("release of SOMEONE ELSE's lock does NOT unlink (preserves their lock)", () => {
+      // Write a lock file owned by a different pid (simulating a sibling
+      // process). Our release call must NOT touch it.
+      writeFileSync(lockPath(baseDir), JSON.stringify({
+        pid: process.pid + 99999,  // definitely not us
+        ts: Date.now(),
+      }));
+      releaseBuildLock(baseDir);
+      expect(existsSync(lockPath(baseDir))).toBe(true);
+    });
+
+    it("release on missing lock is a no-op (ENOENT swallowed)", () => {
+      // No lock file exists — release should not throw.
+      expect(() => releaseBuildLock(baseDir)).not.toThrow();
+      expect(existsSync(lockPath(baseDir))).toBe(false);
+    });
+
+    it("release on corrupt lock file (unparseable JSON) is a no-op", () => {
+      // A corrupt lock file means we can't read the pid → can't prove
+      // we own it → leave it alone (the next stale-recovery will clean it).
+      writeFileSync(lockPath(baseDir), "{ corrupt json");
+      expect(() => releaseBuildLock(baseDir)).not.toThrow();
+      expect(existsSync(lockPath(baseDir))).toBe(true);
+    });
+
+    it("release on lock with no `pid` field does NOT unlink", () => {
+      writeFileSync(lockPath(baseDir), JSON.stringify({ ts: Date.now() }));
+      releaseBuildLock(baseDir);
+      // No pid means we can't claim ownership → file stays.
+      expect(existsSync(lockPath(baseDir))).toBe(true);
+    });
+
+    it("stale-recovered lock IS owned by us (we can release it)", () => {
+      // Take a lock with another pid, age it past STALE_LOCK_MS, then
+      // recover. After recovery the file should belong to us, so a
+      // subsequent release succeeds.
+      writeFileSync(lockPath(baseDir), JSON.stringify({
+        pid: process.pid + 1,
+        ts: Date.now() - 1_000_000,
+      }));
+      utimesSync(lockPath(baseDir), Date.now() / 1000 - 10000, Date.now() / 1000 - 10000);
+      const r = acquireBuildLock(baseDir);
+      expect(r.acquired).toBe(true);
+      expect(r.reason).toBe("stale-recovered");
+      // Now we own it — release works
+      releaseBuildLock(baseDir);
+      expect(existsSync(lockPath(baseDir))).toBe(false);
+    });
+  });
 });
