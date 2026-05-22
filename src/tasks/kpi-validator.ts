@@ -103,7 +103,11 @@ function validateOne(item: unknown): Kpi | null {
   const target = num(item.target);
   const unit = safeStr(item.unit);
   const generated_by = safeStr(item.generated_by);
-  const generated_at = safeStr(item.generated_at);
+  // generated_at must additionally look like an ISO-8601 timestamp.
+  // A bare non-empty string would let "soon" or "yesterday" or "" past
+  // the line-terminator guard; the timeline / report views assume a
+  // sortable date string. CodeRabbit on PR #193 surfaced the gap.
+  const generated_at = isoStr(item.generated_at);
   if (
     kpi_id === null ||
     name === null ||
@@ -163,4 +167,21 @@ function safeStr(v: unknown): string | null {
 function num(v: unknown): number | null {
   if (typeof v !== "number" || !Number.isFinite(v)) return null;
   return v;
+}
+
+/**
+ * Reject anything that isn't an ISO-8601-ish timestamp. Accepts the
+ * shapes Date.prototype.toISOString() produces (the only writer we
+ * control today) plus optional fractional seconds and the `Z` UTC
+ * marker — kept loose enough that older rows written by future clients
+ * with different precision still validate.
+ */
+function isoStr(v: unknown): string | null {
+  const s = safeStr(v);
+  if (s === null) return null;
+  // YYYY-MM-DDTHH:MM:SS[.fff][Z|±HH:MM]
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/.test(s)) {
+    return null;
+  }
+  return s;
 }

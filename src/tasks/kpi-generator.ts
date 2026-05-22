@@ -107,14 +107,28 @@ export async function generateKpis(input: GenerateKpisInput): Promise<Kpi[]> {
     }
   }
 
-  // First attempt with the standard prompt; on parse failure, ONE
-  // retry with a stricter "JSON only, no prose" prompt.
+  // First attempt with the standard prompt; on parse failure, ONE retry
+  // with a stricter "JSON only, no prose" prompt. Only retry when the
+  // first failure is plausibly fixable by a different prompt (empty
+  // content, unparseable text). Skip the retry on network/timeout/SDK
+  // errors — a second call would just burn another timeout window.
+  // CodeRabbit on PR #193 surfaced the wasted-retry cost.
   const first = await callOnce(client, model, input.text, /* strict */ false, timeoutMs, log);
-  if (first.length > 0) return first;
+  if (first.kpis.length > 0) return first.kpis;
+  if (!first.retryable) return [];
 
   log("kpi-gen: first pass returned []; retrying with stricter prompt");
-  return callOnce(client, model, input.text, /* strict */ true, timeoutMs, log);
+  const second = await callOnce(client, model, input.text, /* strict */ true, timeoutMs, log);
+  return second.kpis;
 }
+
+/**
+ * One LLM call + parse. `retryable` is true only when the failure mode
+ * is "the LLM produced output we couldn't shape into KPIs" — a stricter
+ * prompt might fix that. It's false for network/timeout/SDK exceptions,
+ * which a retry would just repeat.
+ */
+interface CallResult { kpis: Kpi[]; retryable: boolean; }
 
 async function callOnce(
   client: AnthropicLike,
@@ -123,7 +137,7 @@ async function callOnce(
   strict: boolean,
   timeoutMs: number,
   log: (msg: string) => void,
-): Promise<Kpi[]> {
+): Promise<CallResult> {
   const system = buildSystemPrompt(strict);
   const userMsg = `Task: ${taskText}\n\nReturn the KPIs as a JSON array.`;
 
@@ -140,14 +154,14 @@ async function callOnce(
     const text = extractText(result);
     if (!text) {
       log("kpi-gen: LLM returned empty content");
-      return [];
+      return { kpis: [], retryable: true };
     }
     const json = stripCodeFence(text);
-    return parseAndShape(json, model);
+    return { kpis: parseAndShape(json, model), retryable: true };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     log(`kpi-gen: LLM call failed: ${msg}`);
-    return [];
+    return { kpis: [], retryable: false };
   }
 }
 

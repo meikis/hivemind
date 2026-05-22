@@ -138,8 +138,25 @@ describe("generateKpis — failure modes (all return [])", () => {
     expect(client.messages.create).toHaveBeenCalledTimes(2);
   });
 
-  it("returns [] when the LLM throws on both attempts", async () => {
+  it("returns [] after ONE LLM call when the first attempt throws (network/timeout/SDK error — no retry)", async () => {
+    // Contract change (PR #193 / CodeRabbit): retrying on network errors
+    // adds latency + cost without changing the outcome. Only parse-style
+    // failures (empty content, unparseable text) trigger the strict
+    // retry — see callOnce's `retryable` flag in src/tasks/kpi-generator.ts.
     const client = fakeClient([new Error("rate limited"), new Error("rate limited")]);
+    const out = await generateKpis({ text: "x", client });
+    expect(out).toEqual([]);
+    expect(client.messages.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("RETRIES once on parse failure but skips retry after a thrown error in the retry pass", async () => {
+    // Symmetric regression guard: if the first attempt is parse-style
+    // (so we DO enter the retry) but the retry itself throws, the
+    // result is still [] — and we should not loop forever.
+    const client = fakeClient([
+      "not json at all",
+      new Error("connection reset"),
+    ]);
     const out = await generateKpis({ text: "x", client });
     expect(out).toEqual([]);
     expect(client.messages.create).toHaveBeenCalledTimes(2);
