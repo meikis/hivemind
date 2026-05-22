@@ -104,23 +104,45 @@ export function countLocalManifestEntries(path: string = LOCAL_MANIFEST_PATH): n
  * `insight` field landed, so the banner can fall back to the count surface
  * without branching on a sentinel.
  */
+/**
+ * Window (ms) used to cluster manifest entries into "the most recent
+ * mine-local run." Each invocation writes its rows within milliseconds
+ * of each other, and subsequent runs typically happen at least minutes
+ * apart. 5 minutes is generous enough to cover slow disk writes /
+ * synchronization slack but tight enough to clearly separate distinct
+ * runs.
+ */
+const LATEST_RUN_WINDOW_MS = 5 * 60 * 1000;
+
 export function getLatestInsightEntry(
   path: string = LOCAL_MANIFEST_PATH,
 ): LocalManifestEntry | null {
   const m = readLocalManifest(path);
   if (!m || !Array.isArray(m.entries)) return null;
+  // First pass: find the absolute-newest entry timestamp (insight or
+  // not). This anchors the "latest run" cluster. Without this anchor,
+  // a stale historical insight would forever shadow newer runs that
+  // happened to produce no insight — and the rule's dedup state
+  // would suppress the count fallback that should have fired
+  // instead (codex P2).
+  let newestTs = Number.NEGATIVE_INFINITY;
+  for (const e of m.entries) {
+    if (!e) continue;
+    const ts = Date.parse(e.created_at ?? "");
+    if (Number.isFinite(ts) && ts > newestTs) newestTs = ts;
+  }
+  if (!Number.isFinite(newestTs)) return null;
+  // Second pass: pick the newest insight-bearing entry within the
+  // latest-run window. Date.parse handles timezone-offset variants;
+  // unparseable created_at rows are skipped so a single malformed
+  // entry can't shadow valid ones.
   let best: LocalManifestEntry | null = null;
   let bestTs = Number.NEGATIVE_INFINITY;
   for (const e of m.entries) {
     if (!e || typeof e.insight !== "string" || e.insight.trim().length === 0) continue;
-    // Compare as parsed timestamps, not raw ISO strings: lexical sort
-    // works for canonical UTC `Z` form but mis-orders when entries use
-    // different timezone offsets (e.g. `+00:00` vs `Z`) or when a
-    // future schema embeds non-ISO date variants. Date.parse returns
-    // NaN for unparseable strings; we skip those entries so a single
-    // malformed row can't shadow valid ones.
     const ts = Date.parse(e.created_at ?? "");
     if (!Number.isFinite(ts)) continue;
+    if (newestTs - ts > LATEST_RUN_WINDOW_MS) continue;
     if (ts > bestTs) {
       best = e;
       bestTs = ts;

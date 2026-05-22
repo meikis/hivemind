@@ -255,6 +255,110 @@ describe("getLatestInsightEntry", () => {
     expect(latest!.skill_name).toBe("with-date");
   });
 
+  it("returns null when the latest mine-local run produced no insight, even if an older run did", () => {
+    // Codex P2 regression guard: getLatestInsightEntry must NOT
+    // surface a stale historical insight when subsequent runs added
+    // only non-insight entries. Without this, the localMinedRule
+    // would keep returning the same insight + dedupKey, and
+    // alreadyShown would suppress fresh count notifications,
+    // hiding new skills from the user entirely.
+    const path = manifestPath("stale-insight");
+    writeFileSync(path, JSON.stringify({
+      created_at: "x",
+      entries: [
+        // Old run: had insight.
+        {
+          skill_name: "old-insight",
+          canonical_path: "/x/SKILL.md",
+          symlinks: [],
+          source_session_ids: ["s1"],
+          source_session_paths: ["/x/s1.jsonl"],
+          source_agent: "claude_code",
+          gate_agent: "claude_code",
+          created_at: "2026-05-20T00:00:00.000Z",
+          uploaded: false,
+          insight: "Old insight from 2 days ago.",
+        },
+        // Newer run: no insight.
+        {
+          skill_name: "new-no-insight-a",
+          canonical_path: "/x/A/SKILL.md",
+          symlinks: [],
+          source_session_ids: ["s2"],
+          source_session_paths: ["/x/s2.jsonl"],
+          source_agent: "claude_code",
+          gate_agent: "claude_code",
+          created_at: "2026-05-22T10:00:00.000Z",
+          uploaded: false,
+        },
+        {
+          skill_name: "new-no-insight-b",
+          canonical_path: "/x/B/SKILL.md",
+          symlinks: [],
+          source_session_ids: ["s3"],
+          source_session_paths: ["/x/s3.jsonl"],
+          source_agent: "claude_code",
+          gate_agent: "claude_code",
+          created_at: "2026-05-22T10:00:00.100Z",
+          uploaded: false,
+        },
+      ],
+    }));
+    // Latest run (10:00:00.100Z) is way past the 5-min window from
+    // the old insight (2 days earlier), so the old insight is
+    // outside the latest-run cluster → return null → rule falls
+    // back to count branch.
+    expect(getLatestInsightEntry(path)).toBeNull();
+  });
+
+  it("picks the insight when the latest run produced one (alongside non-insight entries from the same batch)", () => {
+    // Sanity guard for the common case: one mine-local run produces
+    // 8 candidates, 4 with insight and 4 without. All written within
+    // ms of each other. Accessor returns the newest of the
+    // insight-bearing ones.
+    const path = manifestPath("mixed-same-batch");
+    writeFileSync(path, JSON.stringify({
+      created_at: "x",
+      entries: [
+        {
+          skill_name: "no-insight-a",
+          canonical_path: "/x/A/SKILL.md",
+          symlinks: [],
+          source_session_ids: ["s1"],
+          source_session_paths: ["/x/s1.jsonl"],
+          source_agent: "claude_code",
+          gate_agent: "claude_code",
+          created_at: "2026-05-22T10:00:00.000Z",
+          uploaded: false,
+        },
+        {
+          skill_name: "with-insight",
+          canonical_path: "/x/B/SKILL.md",
+          symlinks: [],
+          source_session_ids: ["s2"],
+          source_session_paths: ["/x/s2.jsonl"],
+          source_agent: "claude_code",
+          gate_agent: "claude_code",
+          created_at: "2026-05-22T10:00:00.050Z",
+          uploaded: false,
+          insight: "Found pattern.",
+        },
+        {
+          skill_name: "no-insight-c",
+          canonical_path: "/x/C/SKILL.md",
+          symlinks: [],
+          source_session_ids: ["s3"],
+          source_session_paths: ["/x/s3.jsonl"],
+          source_agent: "claude_code",
+          gate_agent: "claude_code",
+          created_at: "2026-05-22T10:00:00.100Z",
+          uploaded: false,
+        },
+      ],
+    }));
+    expect(getLatestInsightEntry(path)?.skill_name).toBe("with-insight");
+  });
+
   it("orders timezone-variant timestamps correctly via Date.parse, not lexical comparison", () => {
     // Coderabbit regression guard: raw-string comparison would order
     // "2026-05-21T23:59:00+00:00" AFTER "2026-05-22T00:00:00Z" because

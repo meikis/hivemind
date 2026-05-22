@@ -42,12 +42,14 @@ export function emitClaudeCode(notifications: Notification[]): void {
   // Omit additionalContext entirely when every notification in the
   // batch is user-only — there's nothing safe to send to the model.
   // Claude Code accepts a missing additionalContext field gracefully.
-  const payload: Record<string, unknown> = {
+  // userRendered is always non-empty here: renderNotifications only
+  // returns "" for an empty input array, and we already short-circuit
+  // that case on the first line.
+  process.stdout.write(JSON.stringify({
     hookSpecificOutput: {
       hookEventName: "SessionStart",
       ...(modelRendered ? { additionalContext: modelRendered } : {}),
     },
-  };
-  if (userRendered) payload.systemMessage = userRendered;
-  process.stdout.write(JSON.stringify(payload));
+    systemMessage: userRendered,
+  }));
 }
