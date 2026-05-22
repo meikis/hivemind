@@ -45,7 +45,10 @@ describe("graphContextLine", () => {
     writeLastBuild(baseDir, {
       ts: Date.now(),
       commit_sha: "abc1234",
-      snapshot_sha256: "deadbeef",
+      // 64-char hex (CodeRabbit Minor: prior "deadbeef" was 8 chars and
+      // would be rejected by the hash-shape validator in graphContextLine
+      // — the test still passed (return null) but for the wrong reason).
+      snapshot_sha256: "d".repeat(64),
       node_count: 100,
       edge_count: 200,
     });

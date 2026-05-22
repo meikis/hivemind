@@ -91,6 +91,22 @@ Semantic search (embeddings):
   Add --with-embeddings to "hivemind install" (or "hivemind <agent> install")
   to run "embeddings install" automatically after installing the agent(s).
 
+Codebase graph (per-repo AST snapshot + cloud sync):
+  hivemind graph build [--cwd <path>]        Walk TypeScript sources, extract
+                                             AST nodes + edges, write a
+                                             snapshot, and push to cloud.
+  hivemind graph diff <sha1> <sha2>          Diff two snapshots by commit.
+  hivemind graph history [-n N] [--json]     Show last N build entries.
+  hivemind graph init [--force]              Install a managed
+                                             .git/hooks/post-commit hook
+                                             that rebuilds on each commit.
+  hivemind graph pull                        Download the freshest cloud
+                                             snapshot for HEAD into local.
+  hivemind graph uninstall                   Remove the managed post-commit
+                                             hook.
+  Agents query the local snapshot via the Deeplake mount at
+  ~/.deeplake/memory/graph/{index.md,find/<pattern>,show/<handle-or-pattern>}.
+
 Skill management (mine + share reusable Claude skills across the org):
 ${renderCliHelpBlock()}
 

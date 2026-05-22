@@ -46,6 +46,13 @@ const CLOUD_PAYLOAD = JSON.stringify({
 });
 
 /**
+ * Real sha256 of CLOUD_PAYLOAD. pullSnapshot (CodeRabbit P1) now verifies
+ * the cloud row's snapshot_sha256 matches the payload bytes — fixtures
+ * that claim a different sha would (correctly) be rejected as corrupt.
+ */
+const CLOUD_PAYLOAD_SHA = createHash("sha256").update(CLOUD_PAYLOAD).digest("hex");
+
+/**
  * Mock DeeplakeApi: captures every SQL string and returns a configured row
  * (or empty / throws) for SELECT, no-op for everything else.
  */
@@ -183,14 +190,16 @@ describe("pullSnapshot — outcome resolution", () => {
     writeLastBuild(baseDir, {
       ts: 1_000_000,
       commit_sha: "head1234abcd",
-      snapshot_sha256: "a".repeat(64),
+      // Local sha MUST match cloud sha (which now MUST match the real
+      // hash of CLOUD_PAYLOAD per the post-CodeRabbit validation).
+      snapshot_sha256: CLOUD_PAYLOAD_SHA,
       node_count: 1,
       edge_count: 0,
     });
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
-        snapshot_sha256: "a".repeat(64),
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
         ts: "2026-05-21T00:00:00Z",
         node_count: 1, edge_count: 0,
         worktree_id: "remote-wt",
@@ -218,7 +227,10 @@ describe("pullSnapshot — outcome resolution", () => {
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
-        snapshot_sha256: "different-cloud-sha",
+        // Cloud sha matches payload (post-CodeRabbit validation gate);
+        // the divergence we care about for this test is LOCAL vs CLOUD,
+        // and local was set to a different sha above.
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
         ts: "2026-01-01T00:00:00Z",  // older than local
         node_count: 1, edge_count: 0,
         worktree_id: "remote-wt",
@@ -240,7 +252,7 @@ describe("pullSnapshot — outcome resolution", () => {
   });
 
   it("local missing → pulls (creates snapshot file + sidecars + history entry)", async () => {
-    const cloudSha = "f".repeat(64);
+    const cloudSha = CLOUD_PAYLOAD_SHA;
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
@@ -306,7 +318,7 @@ describe("pullSnapshot — outcome resolution", () => {
       node_count: 1,
       edge_count: 0,
     });
-    const cloudSha = "f".repeat(64);
+    const cloudSha = CLOUD_PAYLOAD_SHA;
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
@@ -345,11 +357,24 @@ describe("pullSnapshot — outcome resolution", () => {
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
-        snapshot_sha256: "a".repeat(64), // same sha string, but cloud row is for commit A
+        // Cloud sha must match payload bytes (CodeRabbit validation gate).
+        // The "collision" we model is between this cloud sha and a local
+        // sha that happens to be identical — the test asserts that the
+        // commit_sha mismatch, NOT the sha equality, governs the gate.
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
         ts: 2_000_000,
         node_count: 7, edge_count: 3,
         worktree_id: "remote-wt",
       }],
+    });
+    // Make local sha "collide" with cloud sha for the collision-scenario
+    // (we model the impossible case to assert the gate isn't sha-keyed).
+    writeLastBuild(baseDir, {
+      ts: 1_000_000,
+      commit_sha: "commit-B",
+      snapshot_sha256: CLOUD_PAYLOAD_SHA,
+      node_count: 1,
+      edge_count: 0,
     });
     const result = await pullSnapshot(tmpCwd, {
       loadConfig: makeConfig,
@@ -371,7 +396,7 @@ describe("pullSnapshot — outcome resolution", () => {
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
-        snapshot_sha256: "new-cloud-sha",
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
         ts: 2_000_000_000_000, // newer
         node_count: 5, edge_count: 7,
         worktree_id: "remote-wt",
@@ -386,7 +411,7 @@ describe("pullSnapshot — outcome resolution", () => {
     // .last-build.json now reflects cloud state (per-worktree path)
     const lb = readLastBuild(baseDir, worktreeIdFromCwd(tmpCwd));
     expect(lb!.ts).toBe(2_000_000_000_000);
-    expect(lb!.snapshot_sha256).toBe("new-cloud-sha");
+    expect(lb!.snapshot_sha256).toBe(CLOUD_PAYLOAD_SHA);
     expect(lb!.node_count).toBe(5);
   });
 });
@@ -441,7 +466,7 @@ describe("pullSnapshot — ts coercion", () => {
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
-        snapshot_sha256: "x".repeat(64),
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
         ts: "2026-05-21T00:00:00.000Z",
         node_count: 0, edge_count: 0,
         worktree_id: "wt",
@@ -463,7 +488,7 @@ describe("pullSnapshot — ts coercion", () => {
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
-        snapshot_sha256: "x".repeat(64),
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
         ts: 1_700_000_000_000,
         node_count: 0, edge_count: 0,
         worktree_id: "wt",
@@ -481,7 +506,7 @@ describe("pullSnapshot — ts coercion", () => {
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
-        snapshot_sha256: "x".repeat(64),
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
         ts: 1_700_000_000, // 10-digit = seconds
         node_count: 0, edge_count: 0,
         worktree_id: "wt",
@@ -499,7 +524,7 @@ describe("pullSnapshot — ts coercion", () => {
     const { api } = makeMockApi({
       selectReturns: [{
         snapshot_jsonb: CLOUD_PAYLOAD,
-        snapshot_sha256: "x".repeat(64),
+        snapshot_sha256: CLOUD_PAYLOAD_SHA,
         ts: "not-a-date",
         node_count: 0, edge_count: 0,
         worktree_id: "wt",

@@ -144,15 +144,12 @@ export function installPostCommitHook(cwd: string, opts: InstallOptions = {}): I
     return { kind: "foreign-hook", path: "", hint: "not in a git repo (no .git directory found)" };
   }
 
-  const hivemindPath = resolveHivemindPath();
-  if (hivemindPath === null) {
-    return {
-      kind: "foreign-hook",
-      path,
-      hint: "hivemind binary not found on PATH. Install hivemind globally (`npm install -g @deeplake/hivemind`) before running `hivemind graph init`, so the hook can find a stable absolute path to call.",
-    };
-  }
-
+  // CodeRabbit P1: check the idempotent "already-ours" path BEFORE the
+  // binary lookup. A restricted shell where `which hivemind` returns
+  // nothing must NOT downgrade a no-op reinstall of OUR own hook to
+  // "foreign-hook" — the contract is "re-running on an already-installed
+  // hook is a no-op". PATH discovery only matters when we're about to
+  // WRITE a new hook file.
   if (existsSync(path)) {
     const content = readFileSync(path, "utf8");
     if (containsOurMarkers(content)) {
@@ -166,6 +163,16 @@ export function installPostCommitHook(cwd: string, opts: InstallOptions = {}): I
       };
     }
     // force=true → fall through to write
+  }
+
+  // Only now (we're committed to writing) do we need a hivemind binary path.
+  const hivemindPath = resolveHivemindPath();
+  if (hivemindPath === null) {
+    return {
+      kind: "foreign-hook",
+      path,
+      hint: "hivemind binary not found on PATH. Install hivemind globally (`npm install -g @deeplake/hivemind`) before running `hivemind graph init`, so the hook can find a stable absolute path to call.",
+    };
   }
 
   mkdirSync(dirname(path), { recursive: true });
@@ -192,19 +199,21 @@ export function installPostCommitHook(cwd: string, opts: InstallOptions = {}): I
  * Returns null when neither source produces a working absolute path.
  */
 function resolveHivemindPath(): string | null {
-  // Try `which hivemind` first — it gives us whatever the user's shell PATH
-  // would have resolved interactively.
-  for (const cmd of ["which", "command"]) {
-    try {
-      const args = cmd === "which" ? ["hivemind"] : ["-v", "hivemind"];
-      const out = execFileSync(cmd, args, {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-      if (out !== "" && out.includes("hivemind")) return out.split("\n")[0]!.trim();
-    } catch {
-      // not found, try next
-    }
+  // `which hivemind` gives us whatever the user's shell PATH would have
+  // resolved interactively. CodeRabbit P1 dropped the previous `command
+  // -v` fallback — `command` is a shell builtin, NOT a binary on PATH,
+  // so `execFileSync("command", ["-v", ...])` always throws ENOENT and
+  // never served as a useful fallback. If `which` itself is missing
+  // (busybox without it, etc.), we report not-found and the caller
+  // surfaces the install hint.
+  try {
+    const out = execFileSync("which", ["hivemind"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (out !== "" && out.includes("hivemind")) return out.split("\n")[0]!.trim();
+  } catch {
+    // which not found, or `hivemind` not on PATH
   }
   return null;
 }

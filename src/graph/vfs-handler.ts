@@ -129,7 +129,22 @@ function loadSnapshotOrError(
   } catch (e) {
     return { kind: "no-graph", message: `Failed to parse snapshot: ${e instanceof Error ? e.message : String(e)}` };
   }
-  return fn(snap, baseDir);
+  // CodeRabbit P1: validate schema and wrap the renderer in try/catch.
+  // A snapshot file can be syntactically valid JSON but structurally
+  // wrong (e.g. truncated by a crash mid-write, or a Phase 1.5 file
+  // read by Phase 1 code). The renderers all assume `nodes` and `links`
+  // are arrays — without this guard a malformed payload would throw
+  // through to the hook caller and surface as "RETRY REQUIRED" instead
+  // of the documented best-effort no-graph response.
+  if (!Array.isArray((snap as { nodes?: unknown }).nodes) ||
+      !Array.isArray((snap as { links?: unknown }).links)) {
+    return { kind: "no-graph", message: "Snapshot schema is invalid (missing nodes/links arrays)." };
+  }
+  try {
+    return fn(snap, baseDir);
+  } catch (e) {
+    return { kind: "no-graph", message: `Failed to render graph view: ${e instanceof Error ? e.message : String(e)}` };
+  }
 }
 
 // ── Renderers ──────────────────────────────────────────────────────────

@@ -113,10 +113,19 @@ export function decideGate(ctx: GateContext): GateDecision {
   // .last-build.json and the gate would refuse to rebuild for either.
   const last = readLastBuild(baseDir, workTreeIdFor(ctx.cwd));
 
+  // CodeRabbit P1: check git state BEFORE the first-build fast-path.
+  // Without this, the hook fires on a brand-new non-git directory (which
+  // hits last === null) and creates snapshots for arbitrary non-repo cwds
+  // — contradicting the documented "not in a git repo → exit 0" skip.
+  const head = readGitCommit(ctx.cwd);
+  if (head === null) {
+    return { fire: false, reason: "not in a git repo" };
+  }
+
   if (last === null) {
-    // Never built before: fire so the user gets an initial snapshot.
-    // The build itself will populate .last-build.json so subsequent
-    // SessionEnd invocations see a non-null entry.
+    // Never built for this worktree before AND we're in a git repo: fire
+    // so the user gets an initial snapshot. The build populates
+    // .last-build.json so subsequent invocations see a non-null entry.
     return { fire: true, reason: "first build (no prior .last-build.json)" };
   }
 
@@ -124,10 +133,6 @@ export function decideGate(ctx: GateContext): GateDecision {
     return { fire: false, reason: `rate limit (${Math.round((ctx.now - last.ts) / 1000)}s < ${Math.round(ctx.intervalMs / 1000)}s)` };
   }
 
-  const head = readGitCommit(ctx.cwd);
-  if (head === null) {
-    return { fire: false, reason: "not in a git repo" };
-  }
   if (head === last.commit_sha) {
     return { fire: false, reason: "HEAD unchanged since last build" };
   }

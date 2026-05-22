@@ -1,8 +1,31 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, statSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, statSync, mkdirSync, chmodSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+/**
+ * CodeRabbit P1: install tests must not depend on a globally-installed
+ * `hivemind` binary (CI fails otherwise — `which hivemind` returns
+ * nothing). Stub it by prepending a tempdir to PATH with an executable
+ * `hivemind` shim that just echoes its argv (the install path never
+ * runs it — it only resolves the absolute path via `which`).
+ */
+function withFakeHivemindOnPath(): { restore: () => void; binDir: string } {
+  const binDir = mkdtempSync(join(tmpdir(), "fake-hivemind-bin-"));
+  const shim = join(binDir, "hivemind");
+  writeFileSync(shim, "#!/bin/sh\necho fake hivemind\n");
+  chmodSync(shim, 0o755);
+  const prev = process.env.PATH ?? "";
+  process.env.PATH = `${binDir}:${prev}`;
+  return {
+    binDir,
+    restore: () => {
+      process.env.PATH = prev;
+      try { rmSync(binDir, { recursive: true, force: true }); } catch {}
+    },
+  };
+}
 
 import {
   HOOK_BEGIN_MARKER,
@@ -50,11 +73,16 @@ describe("git-hook-install — discovery", () => {
 
 describe("git-hook-install — install/uninstall lifecycle", () => {
   let dir: string;
+  let pathStub: ReturnType<typeof withFakeHivemindOnPath>;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "hook-life-"));
     initGitRepo(dir);
+    pathStub = withFakeHivemindOnPath();
   });
-  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+  afterEach(() => {
+    pathStub.restore();
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it("install on fresh repo writes a hook with both markers + executable bit", () => {
     const r = installPostCommitHook(dir);

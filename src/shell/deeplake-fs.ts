@@ -622,7 +622,20 @@ export class DeeplakeFs implements IFileSystem {
   async exists(path: string): Promise<boolean> {
     const p = normPath(path);
     if (p === "/index.md") return true; // Virtual index always exists
-    if (isGraphPath(p)) return true;     // Graph VFS — everything under /graph/ is exists-true
+    if (isGraphPath(p)) {
+      // CodeRabbit P1: the old "everything under /graph/ exists" was too
+      // broad. A bogus path like /graph/find/<no-such-pattern> would
+      // exists-true and confuse callers (e.g. shell write/append flows
+      // that check exists() before touching the path). Tighten:
+      //   - /graph, /graph/find, /graph/show are always-true dirs
+      //   - /graph/<endpoint>/<arg> only exists when the dispatcher
+      //     returns a non-not-found result (ok OR no-graph — both render
+      //     conceptual file content, just one happens to be a stub
+      //     message; the path is addressable either way).
+      if (isGraphDir(p)) return true;
+      const r = handleGraphVfs(graphSubpathOf(p), process.cwd());
+      return r.kind === "ok" || r.kind === "no-graph";
+    }
     return this.files.has(p) || this.dirs.has(p);
   }
 
@@ -724,6 +737,18 @@ export class DeeplakeFs implements IFileSystem {
     const p = normPath(path);
     return names.map(name => {
       const child = p === "/" ? `/${name}` : `${p}/${name}`;
+      // CodeRabbit P1: graph entries aren't in this.files/this.dirs (they're
+      // synthesized). Classify them by the same isGraphDir taxonomy used by
+      // exists()/stat() so tools that consume DirentEntry get accurate types
+      // (e.g. `ls -F` shows trailing slash on /graph and /graph/find).
+      if (isGraphPath(child)) {
+        return {
+          name,
+          isFile: !isGraphDir(child),
+          isDirectory: isGraphDir(child),
+          isSymbolicLink: false,
+        };
+      }
       return {
         name,
         isFile: (this.files.has(child) || child === "/index.md") && !this.dirs.has(child),

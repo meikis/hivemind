@@ -110,7 +110,13 @@ export function readLastBuild(baseDir: string, worktreeId?: string): LastBuildSt
   }
   if (parsed === null || typeof parsed !== "object") return null;
   const o = parsed as Partial<LastBuildState>;
-  if (typeof o.ts !== "number") return null;
+  // CodeRabbit Minor: reject NaN/Infinity. A tampered file with ts:"NaN"
+  // would pass the typeof check (after JSON parse NaN becomes null, but
+  // bare strings like `"ts": "NaN"` typed as number would surface as NaN
+  // in some serializers). Non-finite ts breaks the rate-limit gate
+  // arithmetic in graph-on-stop.ts (now - ts → NaN → comparison always
+  // false → spurious unbounded builds).
+  if (typeof o.ts !== "number" || !Number.isFinite(o.ts)) return null;
   if (o.commit_sha !== null && typeof o.commit_sha !== "string") return null;
   if (typeof o.snapshot_sha256 !== "string") return null;
   // Note: hash *shape* is NOT validated here. The gate hook

@@ -138,8 +138,25 @@ export async function pullSnapshot(
   }
 
   const row = rows[0]!;
-  const cloudSha256 = String(row.snapshot_sha256 ?? "");
-  const cloudPayload = String(row.snapshot_jsonb ?? "");
+  const cloudSha256 = String(row.snapshot_sha256 ?? "").trim();
+  // CodeRabbit P1: validate payload shape + sha256 BEFORE writing to disk.
+  // The cloud column is opaque JSON-or-text; a malformed row (null, garbage,
+  // wrong type, or a sha mismatch) must not persist a corrupt snapshot
+  // locally. coerceSnapshotPayload accepts string or object (re-serializing
+  // the latter); anything else → error outcome.
+  const cloudPayload = coerceSnapshotPayload(row.snapshot_jsonb);
+  if (cloudPayload === null) {
+    return errorOutcome("SELECT cloud row", new Error("invalid snapshot_jsonb payload"));
+  }
+  // Hash mismatch = the API returned the wrong bytes for the claimed
+  // sha256. Refuse rather than poison the local cache. Empty sha is
+  // permitted (legacy rows that predate the column being populated).
+  if (cloudSha256 !== "") {
+    const computedSha = createHash("sha256").update(cloudPayload).digest("hex");
+    if (cloudSha256 !== computedSha) {
+      return errorOutcome("SELECT cloud row", new Error(`snapshot_sha256 mismatch (expected ${cloudSha256}, got ${computedSha})`));
+    }
+  }
   const cloudTs = parseTs(row.ts);
 
   // Compare with local. readLastBuild returns null on missing/corrupt
@@ -263,6 +280,17 @@ function numOrUndefined(raw: unknown): number | undefined {
     if (Number.isFinite(n) && n >= 0) return n;
   }
   return undefined;
+}
+
+/**
+ * Cloud `snapshot_jsonb` arrives as either a string (text column) or a
+ * parsed object (JSON column). Coerce both to a canonical string for
+ * sha-verification + on-disk write. Anything else → null (caller errors).
+ */
+function coerceSnapshotPayload(raw: unknown): string | null {
+  if (typeof raw === "string") return raw;
+  if (raw !== null && typeof raw === "object") return JSON.stringify(raw);
+  return null;
 }
 
 function writeFileAtomic(filePath: string, contents: string): void {

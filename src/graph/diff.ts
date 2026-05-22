@@ -76,6 +76,12 @@ export function diffSnapshots(from: GraphSnapshot, to: GraphSnapshot): SnapshotD
  * surface a clear "snapshot not found" message instead of crashing.
  */
 export function loadSnapshotByCommit(baseDir: string, commitSha: string): GraphSnapshot | null {
+  // CodeRabbit P1: commitSha flows directly into a filesystem path. Without
+  // validation a value like "../etc/passwd" escapes the snapshots dir.
+  // Snapshots are always named by hex git SHAs (40 chars). Accept any
+  // hex length 4-64 to tolerate short SHAs from CLI users (`graph diff
+  // abc1234 def5678`) while still blocking traversal characters.
+  if (!/^[0-9a-f]{4,64}$/i.test(commitSha)) return null;
   const path = join(baseDir, "snapshots", `${commitSha}.json`);
   if (!existsSync(path)) return null;
   let raw: string;

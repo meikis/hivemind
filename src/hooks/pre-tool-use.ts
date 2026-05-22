@@ -373,10 +373,21 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
       const body = result.kind === "ok"
         ? result.body
         : `(${result.kind}) ${result.message}`;
+      // CodeRabbit P1: Read tool requires a file_path-shaped decision
+      // (the harness reads the cached file directly). Bash gets the
+      // command-shaped decision (echo) like the rest of the intercepts.
+      if (input.tool_name === "Read") {
+        const file_path = writeReadCacheFileFn(input.session_id, virtualPath, body);
+        return buildReadDecision(file_path, `[hivemind graph] ${virtualPath}`);
+      }
       return buildAllowDecision(`echo ${JSON.stringify(body)}`, `[hivemind graph] /graph/${subpath}`);
     }
     if (lsDir === "/graph" || lsDir === "/graph/") {
       const body = "index.md\nfind/\nshow/\n";
+      if (input.tool_name === "Read") {
+        const file_path = writeReadCacheFileFn(input.session_id, "/graph", body);
+        return buildReadDecision(file_path, "[hivemind graph] ls /graph");
+      }
       return buildAllowDecision(`echo ${JSON.stringify(body)}`, `[hivemind graph] ls /graph`);
     }
 

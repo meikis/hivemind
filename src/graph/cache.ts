@@ -221,7 +221,18 @@ function rewriteSourceFile(cached: FileExtraction, newPath: string): FileExtract
   return {
     source_file: newPath,
     language: cached.language,
-    nodes: cached.nodes.map((n) => ({ ...n, id: swap(n.id), source_file: newPath })),
+    // The synthetic module node uses source_file as its `label` (see
+    // makeModuleNode in the extractor). On a cache hit after a rename/copy
+    // we already rewrite `id` + `source_file`, but were leaving `label`
+    // pointing at the OLD path — the snapshot then disagreed with a
+    // fresh (non-cached) extraction. Rewrite `label` for module nodes too.
+    // CodeRabbit P1.
+    nodes: cached.nodes.map((n) => ({
+      ...n,
+      id: swap(n.id),
+      label: n.kind === "module" ? newPath : n.label,
+      source_file: newPath,
+    })),
     edges: cached.edges.map((e) => ({ ...e, source: swap(e.source), target: swap(e.target) })),
     parse_errors: cached.parse_errors.map((p) => ({ ...p, source_file: newPath })),
   };

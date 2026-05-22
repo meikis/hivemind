@@ -132,15 +132,25 @@ describe("loadSnapshotByCommit — disk I/O", () => {
   it("returns the parsed snapshot when present", () => {
     const s = snap([n("a.ts:foo:function")], []);
     mkdirSync(join(baseDir, "snapshots"), { recursive: true });
-    writeFileSync(join(baseDir, "snapshots", "abc.json"), JSON.stringify(s));
-    const loaded = loadSnapshotByCommit(baseDir, "abc");
+    // loadSnapshotByCommit now validates commitSha against /^[0-9a-f]{4,64}$/
+    // (CodeRabbit P1 path-traversal guard). Use a hex commit ≥ 4 chars.
+    writeFileSync(join(baseDir, "snapshots", "abcd.json"), JSON.stringify(s));
+    const loaded = loadSnapshotByCommit(baseDir, "abcd");
     expect(loaded?.nodes[0]!.id).toBe("a.ts:foo:function");
   });
 
   it("returns null on corrupt JSON", () => {
     mkdirSync(join(baseDir, "snapshots"), { recursive: true });
-    writeFileSync(join(baseDir, "snapshots", "broken.json"), "{ not valid");
-    expect(loadSnapshotByCommit(baseDir, "broken")).toBeNull();
+    writeFileSync(join(baseDir, "snapshots", "deadbeef.json"), "{ not valid");
+    expect(loadSnapshotByCommit(baseDir, "deadbeef")).toBeNull();
+  });
+
+  it("CodeRabbit P1 regression: rejects path-traversal commit sha", () => {
+    // ../etc/passwd-style values must NOT escape the snapshots dir.
+    expect(loadSnapshotByCommit(baseDir, "../etc/passwd")).toBeNull();
+    expect(loadSnapshotByCommit(baseDir, "../../boot")).toBeNull();
+    // Non-hex characters rejected even at the right length
+    expect(loadSnapshotByCommit(baseDir, "ZZZZ")).toBeNull();
   });
 });
 
@@ -182,20 +192,20 @@ describe("runDiffCommand — CLI integration", () => {
   }
 
   it("prints diff between two existing snapshots (human format)", async () => {
-    await writeSnap("aaa", snap([n("a.ts:foo:function")], []));
-    await writeSnap("bbb", snap([n("a.ts:foo:function"), n("a.ts:bar:function")], []));
+    await writeSnap("aaaa", snap([n("a.ts:foo:function")], []));
+    await writeSnap("bbbb", snap([n("a.ts:foo:function"), n("a.ts:bar:function")], []));
     const { runGraphCommand } = await import("../../../src/commands/graph.js");
-    const { out } = captureOut(() => runGraphCommand(["diff", "aaa", "bbb", "--cwd", workDir]));
-    expect(out).toContain("Diff: aaa → bbb");
+    const { out } = captureOut(() => runGraphCommand(["diff", "aaaa", "bbbb", "--cwd", workDir]));
+    expect(out).toContain("Diff: aaaa → bbbb");
     expect(out).toContain("Nodes: +1 -0   Edges: +0 -0");
     expect(out).toContain("a.ts:bar:function");
   });
 
   it("--json emits parseable JSON", async () => {
-    await writeSnap("aaa", snap([n("a.ts:foo:function")], []));
-    await writeSnap("bbb", snap([], []));
+    await writeSnap("aaaa", snap([n("a.ts:foo:function")], []));
+    await writeSnap("bbbb", snap([], []));
     const { runGraphCommand } = await import("../../../src/commands/graph.js");
-    const { out } = captureOut(() => runGraphCommand(["diff", "aaa", "bbb", "--cwd", workDir, "--json"]));
+    const { out } = captureOut(() => runGraphCommand(["diff", "aaaa", "bbbb", "--cwd", workDir, "--json"]));
     const parsed = JSON.parse(out);
     expect(parsed.counts.nodes_removed).toBe(1);
     expect(parsed.nodes.removed[0].id).toBe("a.ts:foo:function");

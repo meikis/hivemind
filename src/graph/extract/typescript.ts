@@ -55,6 +55,7 @@ interface TSNode {
 // retain the Tree past the extractTypeScript() return, and FileExtraction holds only
 // plain strings (no Node references), so GC reclaims after each call without help.
 let _typescriptParser: Parser | null = null;
+let _tsxParser: Parser | null = null;
 
 function getTypescriptParser(): Parser {
   if (_typescriptParser === null) {
@@ -62,6 +63,26 @@ function getTypescriptParser(): Parser {
     _typescriptParser.setLanguage(TypeScript.typescript);
   }
   return _typescriptParser;
+}
+
+/**
+ * tree-sitter-typescript ships TWO grammars: `typescript` for .ts (which
+ * REJECTS JSX to avoid ambiguity with `<Type>value` type assertions) and
+ * `tsx` for .tsx and JSX-bearing files. Using the wrong grammar produces
+ * spurious parse errors and missing nodes. CodeRabbit P1.
+ */
+function getTsxParser(): Parser {
+  if (_tsxParser === null) {
+    _tsxParser = new Parser();
+    _tsxParser.setLanguage(TypeScript.tsx);
+  }
+  return _tsxParser;
+}
+
+function pickParserForPath(relativePath: string): Parser {
+  return relativePath.endsWith(".tsx") || relativePath.endsWith(".jsx")
+    ? getTsxParser()
+    : getTypescriptParser();
 }
 
 /**
@@ -74,7 +95,7 @@ export function extractTypeScript(
   sourceCode: string,
   relativePath: string,
 ): FileExtraction {
-  const parser = getTypescriptParser();
+  const parser = pickParserForPath(relativePath);
   // Use the callback-based parse API instead of `parser.parse(string)`.
   // tree-sitter 0.21 throws "Invalid argument" on direct string input larger
   // than ~32 KB; the callback path streams the source in chunks and handles
@@ -527,6 +548,22 @@ function pushNode(
   node: GraphNode,
   lookupKey?: string,
 ): void {
+  // CodeRabbit P1: TypeScript permits overloads and declaration merging
+  // (`function foo(...); function foo(...) {}`, repeated `interface Foo`,
+  // overloaded class methods, etc.). The previous unconditional push
+  // emitted duplicate `id`s — NetworkX-style consumers REQUIRE node id
+  // uniqueness within a snapshot. Skip the duplicate but keep the FIRST
+  // node's location/label (it's typically the implementation signature
+  // for overloads; for merged interfaces either is fine — they're a
+  // single logical type).
+  if (result.nodes.some((n) => n.id === node.id)) {
+    // Still register the lookup key so call resolution within the file
+    // can find the symbol by short name. Idempotent on duplicate keys.
+    if (!declByName.has(lookupKey ?? node.label)) {
+      declByName.set(lookupKey ?? node.label, node);
+    }
+    return;
+  }
   result.nodes.push(node);
   declByName.set(lookupKey ?? node.label, node);
 }

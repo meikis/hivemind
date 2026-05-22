@@ -573,7 +573,11 @@ export async function runPullCommand(args: string[]): Promise<void> {
       console.log(`Pulled commit ${outcome.commitSha.slice(0, 7)}`);
       console.log(`  sha256:  ${outcome.snapshotSha256.slice(0, 12)}...`);
       console.log(`  bytes:   ${outcome.bytes}`);
-      console.log(`  origin:  worktree_id=${outcome.sourceWorktreePath.slice(0, 16)}`);
+      // CodeRabbit Minor: `sourceWorktreePath` is the cloud row's `worktree_id`
+      // column (a 16-char sha256 hex, NOT a filesystem path). Print the FULL
+      // value so the user can correlate cloud rows by id; truncating it was
+      // misleading (also worktree_id is already short — no truncation needed).
+      console.log(`  origin:  worktree_id=${outcome.sourceWorktreePath}`);
       console.log(`  cloud ts: ${new Date(outcome.cloudTs).toISOString()}`);
       break;
     case "up-to-date":

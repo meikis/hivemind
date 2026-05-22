@@ -23,7 +23,7 @@
  * the stale-lock recovery on next acquire handles it.
  */
 
-import { mkdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** How long a lock can exist before we treat it as abandoned. 5 min is
@@ -119,9 +119,19 @@ export function acquireBuildLock(baseDir: string): LockResult {
  * will fall through to the stale-recovery path after STALE_LOCK_MS.
  */
 export function releaseBuildLock(baseDir: string): void {
+  // Owner-gated release (codex/CodeRabbit P1): if stale-recovery happened
+  // while an older build was still running, the older process must NOT
+  // unlink the NEWER process's lock when it eventually exits. Read the
+  // lock's `pid` field and only unlink when it matches ours.
+  const path = lockPath(baseDir);
   try {
-    unlinkSync(lockPath(baseDir));
-  } catch {
-    // best-effort
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw) as { pid?: unknown };
+    if (parsed.pid !== process.pid) return; // someone else owns it now
+    unlinkSync(path);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return; // already gone — fine
+    // best-effort for parse / permission errors
   }
 }
