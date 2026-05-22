@@ -23,7 +23,6 @@ import {
 import { bundleDirFromImportMeta, spawnWikiWorker, wikiLog } from "./spawn-wiki-worker.js";
 import { tryStopCounterTrigger } from "../skillify/triggers.js";
 import { tryAutoExtract } from "./auto-extract.js";
-import { tryCommitKpiExtract } from "./commit-kpi-extract.js";
 import { EmbedClient } from "../embeddings/client.js";
 import { embeddingSqlLiteral } from "../embeddings/sql.js";
 import { embeddingsDisabled } from "../embeddings/disable.js";
@@ -212,21 +211,14 @@ async function main(): Promise<void> {
     }
   }
 
-  // Commit-driven KPI auto-extract — fires async (fire-and-forget) on
-  // `git commit` in PostToolUse. Disabled when
-  // HIVEMIND_AUTO_KPI_FROM_COMMITS=false. Failures are absorbed; this
-  // MUST NOT interfere with session capture.
-  try {
-    const result = await tryCommitKpiExtract(input, {
-      agent: "claude-code",
-      currentUser: config.userName,
-      cwd: input.cwd,
-      log,
-    });
-    if (result === "emitted") log("commit-kpi-extract: spawned background analyzer");
-  } catch (e: unknown) {
-    log(`commit-kpi-extract failed: ${(e as Error).message ?? String(e)}`);
-  }
+  // Commit-driven KPI auto-extract is disabled for now — the
+  // fire-and-forget sub-agent spawned per `git commit` (see
+  // src/hooks/commit-kpi-extract.ts) consumed a high amount of tokens
+  // on the user's claude/codex plan (every commit triggered a full
+  // goal/KPI scan + reasoning pass over the diff). The module is
+  // kept on disk for future re-wiring once we add: sha-dedup,
+  // empty-goals prefilter, debounce, and a hard timeout. Re-enable
+  // by restoring the import + try block here.
 
   maybeTriggerPeriodicSummary(input.session_id, input.cwd ?? "", config);
 
