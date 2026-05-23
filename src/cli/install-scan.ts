@@ -77,15 +77,25 @@ function manifestPath(): string {
 const SCAN_TIMEOUT_MS = 300_000;
 
 /**
- * Sessions to mine on the install-time pass. Bumped from 5 → 20 after
- * real-world testing: on a machine with ~340 sessions where the newest
- * dozen are all conversational/planning content (no coding mistakes),
- * --n 5 returned zero insights. The picker uses epsilon-greedy
- * (ε=0.3) so ~6 of 20 picks are random — high enough to reach back
- * into history and surface actual coding sessions where real
- * repeatable-mistake patterns live.
+ * Sessions to mine on the install-time pass. Tuned across iterations
+ * (3 → 5 → 20 → 10) with real-world latency + quality measurements:
+ *
+ *   --n 5:  95s total, 3 candidates. Too few for the advisor to
+ *           reject meta-noise and still have good options.
+ *   --n 10: 230s total, ~10-13 candidates. Sweet spot — advisor
+ *           consistently picks a concrete + counted insight; 7+ of
+ *           the candidates are typically high-quality.
+ *   --n 20: 290s total, ~25 candidates. Diminishing returns: 60s
+ *           more wait for the user, no measurable quality lift in
+ *           the advisor's pick (just more candidates to rank).
+ *
+ * Concurrency=4 caps parallelism, so the latency curve flattens past
+ * N≈10 (ceil(N/4) batches × per-batch slowest-call time). The
+ * epsilon-greedy picker (ε=0.3) gives ~3 random picks at N=10 —
+ * enough to reach past recent conversational sessions into real
+ * coding work.
  */
-const INSTALL_SCAN_SESSION_COUNT = 20;
+const INSTALL_SCAN_SESSION_COUNT = 10;
 
 /**
  * Cheap top-level scan: does any `~/.claude/projects/*` subdir contain

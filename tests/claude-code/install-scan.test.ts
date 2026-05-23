@@ -173,7 +173,7 @@ describe("canOfferInstallScan", () => {
 });
 
 describe("runInstallScan", () => {
-  it("spawns `skillify mine-local --n 20 --only claude_code` against the same CLI bundle the install ran from", async () => {
+  it("spawns `skillify mine-local --n 10 --only claude_code` against the same CLI bundle the install ran from", async () => {
     nextChildBehavior = { exitCode: 0 };
     await runInstallScan();
     expect(spawnCalls).toHaveLength(1);
@@ -184,12 +184,13 @@ describe("runInstallScan", () => {
     expect(args[0]).toBe(FAKE_CLI);
     expect(args).toContain("skillify");
     expect(args).toContain("mine-local");
-    // `--n 20` is the install-time session cap. Bumped 3 → 5 → 20
-    // across iterations: the recency-biased picker on a machine with
-    // many recent conversational sessions needs the epsilon-greedy
-    // random tail (30% of picks) to actually reach coding sessions.
+    // `--n 10` is the install-time session cap. Tuned across
+    // iterations (3 → 5 → 20 → 10) with real-data latency + quality
+    // measurements: 10 is the sweet spot — concurrency=4 caps
+    // parallelism so the curve flattens past N≈10, and advisor pick
+    // quality at N=10 matches N=20 in practice.
     expect(args).toContain("--n");
-    expect(args[args.indexOf("--n") + 1]).toBe("20");
+    expect(args[args.indexOf("--n") + 1]).toBe("10");
     // `--only claude_code` honors the "scan your Claude Code sessions"
     // copy — without it, mine-local would walk every installed agent
     // and could surface an insight from Codex / Cursor (codex PR #198

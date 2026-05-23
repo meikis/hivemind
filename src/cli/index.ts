@@ -197,12 +197,12 @@ async function runAuthGate(args: string[]): Promise<void> {
     // wording as misleading status output.
     log("");
     log("🐝 Want me to scan your recent Claude Code sessions for repeatable mistakes?");
-    log("Takes 2-5 minutes. Scans 20 sessions in parallel using your Claude Code subscription.");
+    log("Takes 2-4 minutes. Scans 10 sessions in parallel using your Claude Code subscription.");
     log("");
     const scanOk = await confirm("Scan now?", true);
     if (scanOk) {
       log("");
-      log("Scanning your 20 most-recent sessions (up to 5 min). Be patient — haiku is running in the background.");
+      log("Scanning your 10 most-recent sessions (up to 5 min). Be patient — haiku is running in the background.");
       const { insight, skillsCount } = await runInstallScan();
       log("");
       if (insight && insight.insight && insight.insight.trim().length > 0) {
