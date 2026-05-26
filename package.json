@@ -41,7 +41,9 @@
     "dup": "jscpd src",
     "audit:openclaw": "node scripts/audit-openclaw-bundle.mjs",
     "pack:check": "node scripts/pack-check.mjs",
+    "rebuild:native": "node scripts/ensure-tree-sitter.mjs",
     "ci": "npm run typecheck && npm run dup && npm test",
+    "postinstall": "node scripts/ensure-tree-sitter.mjs",
     "prepare": "husky && npm run build",
     "prepack": "npm run build"
   },
@@ -58,10 +60,12 @@
     "deeplake": "^0.3.30",
     "js-yaml": "^4.1.1",
     "just-bash": "^2.14.0",
-    "tree-sitter": "^0.21.1",
-    "tree-sitter-typescript": "^0.23.2",
     "yargs-parser": "^22.0.0",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-typescript": "^0.23.2"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
