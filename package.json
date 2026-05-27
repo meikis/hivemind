@@ -26,6 +26,7 @@
     "openclaw/openclaw.plugin.json",
     "openclaw/package.json",
     ".claude-plugin",
+    "scripts",
     "README.md",
     "LICENSE"
   ],
