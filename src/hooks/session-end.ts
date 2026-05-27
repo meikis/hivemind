@@ -51,6 +51,12 @@ function recordSessionUsage(transcriptPath: string | undefined, sessionId: strin
 async function main(): Promise<void> {
   if (process.env.HIVEMIND_WIKI_WORKER === "1") return;
   if (process.env.HIVEMIND_CAPTURE === "false") return;
+  // Allowlist gate: filter Agent SDK spawns (entrypoint "sdk-py" / "sdk-ts")
+  // when HIVEMIND_CAPTURE_ONLY_CLI=true.
+  if (
+    process.env.HIVEMIND_CAPTURE_ONLY_CLI === "true" &&
+    !(process.env.CLAUDE_CODE_ENTRYPOINT ?? "").includes("cli")
+  ) return;
 
   const input = await readStdin<StopInput>();
   const sessionId = input.session_id;

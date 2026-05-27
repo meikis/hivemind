@@ -189,7 +189,13 @@ async function main(): Promise<void> {
   // under capture=false. The renderer is read-only and runs
   // regardless; the rules table it queries is lazy-created by the
   // CLI write path (`hivemind rules add`).
-  const captureEnabled = process.env.HIVEMIND_CAPTURE !== "false";
+  // Allowlist gate: when HIVEMIND_CAPTURE_ONLY_CLI=true, capture only sessions
+  // whose CLAUDE_CODE_ENTRYPOINT contains "cli" (filters out Agent SDK spawns
+  // which set entrypoint to "sdk-py" / "sdk-ts").
+  const onlyCli = process.env.HIVEMIND_CAPTURE_ONLY_CLI === "true";
+  const entrypoint = process.env.CLAUDE_CODE_ENTRYPOINT ?? "";
+  const entrypointAllowed = !onlyCli || entrypoint.includes("cli");
+  const captureEnabled = process.env.HIVEMIND_CAPTURE !== "false" && entrypointAllowed;
   let rulesBlock = "";
   if (input.session_id && creds?.token) {
     try {
