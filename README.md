@@ -406,7 +406,7 @@ We run Hivemind ourselves, all day, across Claude Code, OpenClaw, Codex, and Cur
 
 ## Got questions?
 
-Setup, BYOC, agent integrations, or workflow — come ask in the community. We hang out on both:
+Setup, BYOC, agent integrations, or workflow. Come ask in the community. We hang out on both:
 
 <p align="center">
   <a href="https://discord.gg/EeGjnyDBx"><img src="https://img.shields.io/badge/Join_us_on-Discord-5865F2?logo=discord&logoColor=white&style=for-the-badge" alt="Join us on Discord"></a>
