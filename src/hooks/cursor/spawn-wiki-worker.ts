@@ -12,6 +12,7 @@ import type { Config } from "../../config.js";
 import { makeWikiLogger } from "../../utils/wiki-log.js";
 import { getInstalledVersion } from "../../utils/version-check.js";
 import { spawnDetachedNodeWorker } from "../../utils/spawn-detached.js";
+import { projectNameFromCwd } from "../../utils/project-name.js";
 
 const HOME = homedir();
 const wikiLogger = makeWikiLogger(join(HOME, ".cursor", "hooks"));
@@ -87,7 +88,7 @@ export interface SpawnOptions {
 
 export function spawnCursorWikiWorker(opts: SpawnOptions): void {
   const { config, sessionId, cwd, bundleDir, reason } = opts;
-  const projectName = cwd.split("/").pop() || "unknown";
+  const projectName = projectNameFromCwd(cwd);
 
   const tmpDir = join(tmpdir(), `deeplake-wiki-${sessionId}-${Date.now()}`);
   mkdirSync(tmpDir, { recursive: true });
