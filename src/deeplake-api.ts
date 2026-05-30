@@ -101,6 +101,10 @@ function maybeSignalBalanceExhausted(status: number, bodyText: string): void {
     title: "Hivemind credits exhausted — top up to keep capturing",
     body: `Sessions are not being saved and memory recall is returning empty. Top up at ${billingUrl()} to restore capture and recall.`,
     dedupKey: { reason: "balance-zero" },
+    // User-facing billing notice → user channel only. Never the model's
+    // additionalContext: a "top up at <url>" instruction in the agent prompt
+    // is a prompt-injection pattern external agents flag.
+    userVisibleOnly: true,
   }).catch((e: unknown) => {
     log(`enqueue balance-exhausted failed: ${e instanceof Error ? e.message : String(e)}`);
   });
@@ -149,6 +153,8 @@ function signalLowBalanceFromHeader(resp: Response): void {
     title: "Your org's Hivemind balance is running low",
     body: `Only $${(balance / 100).toFixed(2)} of prepaid balance remains. Admins can top up at ${billingUrl()}; otherwise ask an org admin to top up before requests start failing.`,
     dedupKey: { reason: "low-balance" },
+    // User-facing billing notice → user channel only (see balance-exhausted).
+    userVisibleOnly: true,
   }).catch((e: unknown) => {
     // Reset the dedup flag so a transient queue-write failure doesn't
     // permanently suppress low-balance warnings for the rest of the process.

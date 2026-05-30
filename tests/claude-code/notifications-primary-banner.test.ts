@@ -10,6 +10,13 @@ vi.mock("../../src/notifications/sources/org-stats.js", () => ({
   fetchOrgStats: orgStatsMock,
 }));
 
+// Mock the resume brief too — it issues a DeeplakeApi query that would
+// otherwise retry against the dead test endpoint. Default: nothing to resume.
+const { resumeMock } = vi.hoisted(() => ({ resumeMock: vi.fn() }));
+vi.mock("../../src/notifications/sources/resume-brief.js", () => ({
+  pickResumeBrief: resumeMock,
+}));
+
 import { pickPrimaryBanner, formatTokens } from "../../src/notifications/sources/primary-banner.js";
 import { appendUsageRecord } from "../../src/notifications/usage-tracker.js";
 import type { Credentials } from "../../src/commands/auth-creds.js";
@@ -35,6 +42,9 @@ beforeEach(() => {
   orgStatsMock.mockReset();
   // Default: server unreachable → primary-banner falls back to local jsonl.
   orgStatsMock.mockResolvedValue(null);
+  resumeMock.mockReset();
+  // Default: no prior summary for this project → no resume brief.
+  resumeMock.mockResolvedValue(null);
 });
 
 afterEach(() => {
