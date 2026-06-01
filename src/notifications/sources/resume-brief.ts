@@ -43,10 +43,18 @@ const log = (m: string) => _log("notifications-resume-brief", m);
 /** Max length of the surfaced "next step" line — one terminal row. */
 const MAX_LINE_CHARS = 120;
 
-/** How many recent summaries to walk, newest-first, looking for the most
+/** How many real summaries to walk, newest-first, looking for the most
  *  recent session that left open work. A project untouched for a while
  *  resuming on an older-but-real TODO is fine. */
 const LOOKBACK = 5;
+
+/** How many raw rows to pull before filtering. The memory table carries a
+ *  SessionStart *placeholder* row per session (a skeleton with no `##`
+ *  content section until the wiki worker fills it at SessionEnd) and can
+ *  hold duplicate rows per session. Both would otherwise consume the
+ *  LOOKBACK window and shadow the real summaries underneath, so we
+ *  over-fetch, dedup by path, drop placeholders, then keep LOOKBACK reals. */
+const SCAN_LIMIT = 40;
 
 /** Hard cap on the lookup. DeeplakeApi.query retries ~3.5s on an unreachable
  *  endpoint; the SessionStart hook budget is 5s and fetchOrgStats already
@@ -110,6 +118,48 @@ export function extractNextSteps(summary: string): string {
   return "";
 }
 
+/**
+ * A SessionStart placeholder is a metadata skeleton (`# Session …` title +
+ * bullet lines, `Status: in-progress`) with no `## ` content section yet —
+ * the wiki worker hasn't summarized the session. A real summary always has
+ * at least one `## ` section (`## What Happened`, `## Open Questions / TODO`,
+ * `## Next Steps`, …). Treat anything without a `## ` heading as a placeholder
+ * so it never counts as "wrapped clean" or shadows a real summary.
+ */
+export function isPlaceholderSummary(summary: string): boolean {
+  return !/^##\s+/m.test(summary);
+}
+
+export interface SummaryRow {
+  summary?: unknown;
+  path?: unknown;
+  last_update_date?: unknown;
+}
+
+/**
+ * From raw newest-first rows, keep the most recent REAL summary per session
+ * (dedup by path), drop placeholders, and cap at `lookback`. Pure so the
+ * windowing — the part that was silently broken — is unit-testable without
+ * the network.
+ */
+export function selectRealSummaries(
+  rows: SummaryRow[],
+  lookback = LOOKBACK,
+): { summary: string; date: string | undefined }[] {
+  const seenPath = new Set<string>();
+  const out: { summary: string; date: string | undefined }[] = [];
+  for (const row of rows) {
+    const path = typeof row.path === "string" ? row.path : "";
+    if (path && seenPath.has(path)) continue; // duplicate row for a session we already took
+    if (path) seenPath.add(path);
+    const summary = typeof row.summary === "string" ? row.summary : "";
+    if (isPlaceholderSummary(summary)) continue; // SessionStart skeleton — skip
+    out.push({ summary, date: typeof row.last_update_date === "string" ? row.last_update_date : undefined });
+    if (out.length >= lookback) break;
+  }
+  return out;
+}
+
 function truncate(s: string, max = MAX_LINE_CHARS): string {
   const clean = s.replace(/\s+/g, " ").trim();
   if (clean.length <= max) return clean;
@@ -167,27 +217,36 @@ export async function pickResumeBrief(
       table,
     );
 
-    // Last LOOKBACK summaries for THIS project by THIS user, newest first.
-    const rows = await withTimeout(
+    // Over-fetch recent rows for THIS project by THIS user, newest first.
+    // SessionStart placeholders + duplicate rows live here too, so we filter
+    // them out below rather than trusting a raw LIMIT.
+    const rawRows = await withTimeout(
       api.query(
-        `SELECT summary, last_update_date FROM "${table}" ` +
+        `SELECT summary, path, last_update_date FROM "${table}" ` +
           `WHERE project = '${sqlStr(project)}' AND author = '${sqlStr(creds.userName)}' ` +
-          `AND summary <> '' ORDER BY last_update_date DESC LIMIT ${LOOKBACK}`,
+          `AND summary <> '' ORDER BY last_update_date DESC LIMIT ${SCAN_LIMIT}`,
       ),
       QUERY_TIMEOUT_MS,
       null,
     );
-    if (!rows || rows.length === 0) {
+    if (!rawRows || rawRows.length === 0) {
       log(`silent (no prior summary for project=${project})`);
       return null; // outcome 3 — plain welcome
     }
 
+    // Dedup by session + drop placeholders so the walk-back lands on real
+    // summaries instead of in-progress skeletons.
+    const reals = selectRealSummaries(rawRows as SummaryRow[]);
+    if (reals.length === 0) {
+      log(`silent (only placeholders for project=${project})`);
+      return null; // no real summary yet — don't claim "wrapped clean"
+    }
+
     // Walk newest-first for the most recent session with real open work.
-    for (const row of rows) {
-      const summary = typeof row.summary === "string" ? row.summary : "";
-      const next = extractNextSteps(summary);
+    for (const r of reals) {
+      const next = extractNextSteps(r.summary);
       if (next.length >= 4) {
-        const age = relativeAge(row.last_update_date as string | undefined);
+        const age = relativeAge(r.date);
         const when = age ? ` (${age})` : "";
         log(`fired (project=${project}, open work)`);
         return {
@@ -199,8 +258,8 @@ export async function pickResumeBrief(
       }
     }
 
-    // outcome 2 — summaries exist, but every recent session wrapped clean.
-    const age = relativeAge(rows[0].last_update_date as string | undefined);
+    // outcome 2 — real summaries exist, but every recent session wrapped clean.
+    const age = relativeAge(reals[0].date);
     const when = age ? ` ${age}` : "";
     log(`fired (project=${project}, no open work)`);
     return { brief: `Picking up on ${project} — last session${when} wrapped up clean, nothing pending.` };
