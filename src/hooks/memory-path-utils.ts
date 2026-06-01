@@ -14,7 +14,10 @@ export const SAFE_BUILTINS = new Set([
   "grep", "egrep", "fgrep", "rg", "cut", "tr", "sort", "uniq",
   "wc", "head", "tail", "tac", "rev", "nl", "fold", "expand", "unexpand",
   "paste", "join", "comm", "column", "diff", "strings", "split",
-  "find", "xargs", "which",
+  // xargs removed: it executes its input as a child command (`… | xargs curl`).
+  // `find` stays because the VFS serves `find -name`, but isSafe() rejects the
+  // command-dispatching `-exec/-execdir/-ok/-okdir` primaries below.
+  "find", "which",
   "jq", "yq", "xan", "base64", "od",
   // tar removed: --to-command=<cmd> executes an arbitrary program per entry.
   // env removed: `env <cmd>` runs an arbitrary program.
@@ -22,9 +25,15 @@ export const SAFE_BUILTINS = new Set([
   "md5sum", "sha1sum", "sha256sum",
   "echo", "printf", "tee",
   "pwd", "cd", "basename", "dirname", "printenv", "hostname", "whoami",
-  "date", "seq", "expr", "sleep", "timeout", "time", "true", "false", "test",
+  // timeout and time removed: both are wrappers that run an arbitrary child
+  // command (`timeout 1 curl …`, `time curl …`).
+  "date", "seq", "expr", "sleep", "true", "false", "test",
   "alias", "unalias", "history", "help", "clear",
-  "for", "while", "do", "done", "if", "then", "else", "fi", "case", "esac",
+  // Shell control keywords removed: as a stage's first token they let a child
+  // command ride in as a later token (`if true; then curl …; fi` splits into a
+  // `then curl …` stage whose leading `then` would otherwise pass). No VFS
+  // handler emulates control flow, so dropping them only sends such commands to
+  // the guidance/deny path — they never reach a real shell.
 ]);
 
 export function isSafe(cmd: string): boolean {
@@ -32,6 +41,15 @@ export function isSafe(cmd: string): boolean {
   // the child process sees them, bypassing the single-quote stripping below.
   if (/\$\(|`|<\(|\$'/.test(cmd)) return false;
   const stripped = cmd.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+  // `find … -exec/-execdir/-ok/-okdir <cmd>` runs an arbitrary program per
+  // match. `find` itself must stay allowlisted for the `-name` read shape, so
+  // reject the command-dispatching primaries explicitly. Checked post-strip so
+  // a quoted grep pattern containing "-exec" can't trip a false positive.
+  if (/(?:^|\s)-(?:exec|execdir|ok|okdir)\b/.test(stripped)) return false;
+  // Note: we deliberately do NOT split on a bare `&` — it collides with fd
+  // redirections like `2>&1`. A backgrounded second command (`cat x & curl …`)
+  // still can't reach the host: it matches no handler, so it falls through to
+  // the retry-guidance path which rewrites it to a harmless echo.
   const stages = stripped.split(/\||;|&&|\|\||\n/);
   for (const stage of stages) {
     const firstToken = stage.trim().split(/\s+/)[0] ?? "";

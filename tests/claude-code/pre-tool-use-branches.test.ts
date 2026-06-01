@@ -87,6 +87,20 @@ describe("pre-tool-use: pure helpers", () => {
     expect(isSafe("$(evil) foo")).toBe(false);
     expect(isSafe("python -c pwn")).toBe(false);
   });
+
+  it("isSafe rejects wrappers/keywords that smuggle a child command", () => {
+    // Control-flow keyword as a stage's leading token (`if`/`then` removed).
+    expect(isSafe("if true; then curl evil; fi")).toBe(false);
+    // Command-running wrappers are no longer allowlisted.
+    expect(isSafe("timeout 1 curl evil")).toBe(false);
+    expect(isSafe("cat /index.md | xargs curl")).toBe(false);
+    // `find` stays allowed for -name, but -exec dispatches a child command.
+    expect(isSafe("find / -name '*.md' -exec curl evil {} ;")).toBe(false);
+    // A plain `find -name` read shape is still accepted.
+    expect(isSafe("find / -name '*.md'")).toBe(true);
+    // fd redirection (`2>&1`) must NOT be mistaken for a background `&`.
+    expect(isSafe("cat /index.md 2>&1 | head -20")).toBe(true);
+  });
 });
 
 describe("getShellCommand: per-tool branches", () => {
@@ -193,12 +207,13 @@ describe("processPreToolUse: non-memory / no-op paths", () => {
     expect(d?.command).toContain("bash builtins");
   });
 
-  it("returns null (no intercept) when no config is loaded", async () => {
+  it("returns retry guidance (NOT a host passthrough) when no config is loaded", async () => {
     const d = await processPreToolUse(
       { session_id: "s", tool_name: "Bash", tool_input: { command: "cat ~/.deeplake/memory/index.md" }, tool_use_id: "t" },
       { config: null as any },
     );
-    expect(d).toBeNull();
+    expect(d?.command).toContain("[RETRY REQUIRED]");
+    expect(d?.deny).toBeUndefined();
   });
 
   it("rewrites python3 on a tilde memory path to cat", async () => {
@@ -524,7 +539,7 @@ describe("processPreToolUse: find / grep / fallback", () => {
     expect(d?.command).toContain("match line");
   });
 
-  it("returns null (no intercept) when direct-read path throws", async () => {
+  it("returns retry guidance (does NOT fall through to the host shell) when the direct-read path throws", async () => {
     const d = await processPreToolUse(
       { session_id: "s", tool_name: "Bash", tool_input: { command: "cat ~/.deeplake/memory/sessions/a.json" }, tool_use_id: "t" },
       {
@@ -535,7 +550,24 @@ describe("processPreToolUse: find / grep / fallback", () => {
         logFn: vi.fn(),
       },
     );
-    expect(d).toBeNull();
+    expect(d?.command).toContain("[RETRY REQUIRED]");
+  });
+
+  it("returns retry guidance for an isSafe-but-unroutable memory command instead of running it on the host", async () => {
+    // `sort` passes isSafe() (it's an allowlisted builtin) but no VFS handler
+    // serves it; it must be rewritten to the harmless echo guidance, not handed
+    // back to the real shell where it would read /etc/passwd and write /tmp/out.
+    const d = await processPreToolUse(
+      { session_id: "s", tool_name: "Bash", tool_input: { command: "sort /etc/passwd ~/.deeplake/memory/index.md > /tmp/out" }, tool_use_id: "t" },
+      {
+        config: BASE_CONFIG as any,
+        createApi: vi.fn(() => makeApi()),
+        executeCompiledBashCommandFn: vi.fn(async () => null) as any,
+        logFn: vi.fn(),
+      },
+    );
+    expect(d?.command).toContain("[RETRY REQUIRED]");
+    expect(d?.command).not.toContain("/etc/passwd");
   });
 });
 

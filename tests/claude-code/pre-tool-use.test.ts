@@ -136,23 +136,27 @@ describe("pre-tool-use: commands targeting memory are intercepted", () => {
     }
   });
 
-  // ── Write commands still use shell ──
+  // ── Commands the VFS can't serve without a backend fall back to the retry
+  //    guidance (never to the host shell). With no HIVEMIND_TOKEN configured in
+  //    this harness, even otherwise-serviceable shapes land here. ──
 
-  it("rewrites echo redirect to virtual shell", () => {
+  it("rewrites echo redirect to retry guidance when unconfigured", () => {
     const r = runPreToolUse("Bash", { command: "echo 'hello' > ~/.deeplake/memory/test.md" });
     expect(r.empty).toBe(false);
     if (!r.empty) {
       expect(r.decision).toBe("allow");
-      expect(r.updatedCommand).toContain("deeplake-shell.js");
+      expect(r.updatedCommand).toContain("RETRY REQUIRED");
+      expect(r.updatedCommand).not.toContain("deeplake-shell.js");
     }
   });
 
-  it("rewrites jq pipeline to virtual shell", () => {
+  it("rewrites jq pipeline to retry guidance when unconfigured", () => {
     const r = runPreToolUse("Bash", { command: "cat ~/.deeplake/memory/data.json | jq '.keys | length'" });
     expect(r.empty).toBe(false);
     if (!r.empty) {
       expect(r.decision).toBe("allow");
-      expect(r.updatedCommand).toContain("deeplake-shell.js");
+      expect(r.updatedCommand).toContain("RETRY REQUIRED");
+      expect(r.updatedCommand).not.toContain("deeplake-shell.js");
     }
   });
 });
@@ -442,7 +446,10 @@ describe("pre-tool-use: non-Bash tools targeting memory", () => {
     expect(r.empty).toBe(false);
     if (!r.empty) {
       expect(r.decision).toBe("allow");
-      expect(r.updatedCommand).toContain("ls /");
+      // Unconfigured harness (no HIVEMIND_TOKEN): the VFS can't serve the listing,
+      // so the hook emits retry guidance rather than the old shell-fallback
+      // rewrite. It is still intercepted (never passed through to the host).
+      expect(r.updatedCommand).toContain("RETRY REQUIRED");
     }
   });
 

@@ -13,10 +13,7 @@
  * spawning the bundled script in a subprocess.
  */
 
-import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { readStdin } from "../../utils/stdin.js";
 import { loadConfig } from "../../config.js";
 import { DeeplakeApi } from "../../deeplake-api.js";
@@ -40,11 +37,6 @@ import { isSafe, touchesMemory, rewritePaths } from "../memory-path-utils.js";
 export { isSafe, touchesMemory, rewritePaths };
 
 const log = (msg: string) => _log("codex-pre", msg);
-
-const __bundleDir = dirname(fileURLToPath(import.meta.url));
-const SHELL_BUNDLE = existsSync(join(__bundleDir, "shell", "deeplake-shell.js"))
-  ? join(__bundleDir, "shell", "deeplake-shell.js")
-  : join(__bundleDir, "..", "shell", "deeplake-shell.js");
 
 export interface CodexPreToolUseInput {
   session_id: string;
@@ -70,20 +62,6 @@ export function buildUnsupportedGuidance(): string {
     "Rewrite your command using only bash tools and retry.";
 }
 
-export function runVirtualShell(cmd: string, shellBundle = SHELL_BUNDLE, logFn: (msg: string) => void = log): string {
-  try {
-    return execFileSync("node", [shellBundle, "-c", cmd], {
-      encoding: "utf-8",
-      timeout: 10_000,
-      env: { ...process.env },
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-  } catch (e: any) {
-    logFn(`virtual shell failed: ${e.message}`);
-    return "";
-  }
-}
-
 function buildIndexContent(rows: Record<string, unknown>[]): string {
   const lines = ["# Memory Index", "", `${rows.length} sessions:`, ""];
   for (const row of rows) {
@@ -107,8 +85,6 @@ interface CodexPreToolDeps {
   handleGrepDirectFn?: typeof handleGrepDirect;
   readCachedIndexContentFn?: typeof readCachedIndexContent;
   writeCachedIndexContentFn?: typeof writeCachedIndexContent;
-  runVirtualShellFn?: typeof runVirtualShell;
-  shellBundle?: string;
   logFn?: (msg: string) => void;
 }
 
@@ -133,8 +109,6 @@ export async function processCodexPreToolUse(
     handleGrepDirectFn = handleGrepDirect,
     readCachedIndexContentFn = readCachedIndexContent,
     writeCachedIndexContentFn = writeCachedIndexContent,
-    runVirtualShellFn = runVirtualShell,
-    shellBundle = SHELL_BUNDLE,
     logFn = log,
   } = deps;
 
@@ -346,15 +320,21 @@ export async function processCodexPreToolUse(
         }
       }
     } catch (e: any) {
-      logFn(`direct query failed, falling back to shell: ${e.message}`);
+      logFn(`direct query failed: ${e.message}`);
     }
   }
 
-  logFn(`intercepted → running via virtual shell: ${rewritten}`);
-  const result = runVirtualShellFn(rewritten, shellBundle, logFn);
+  // Nothing matched: no config, an unhandled command shape, or a direct-query
+  // error. Do NOT run the command through just-bash or the host shell — it only
+  // passed isSafe(), and just-bash can invoke real host binaries, which is the
+  // exact code-execution surface this hook exists to remove. BLOCK (exit 2) so
+  // the command never reaches the host, and inject the guidance as the result.
+  // (We can't use "guide" here: guide exits 0, which lets Codex run the original
+  // command on the host — the very thing we're preventing.)
+  logFn(`unroutable memory command, blocking with guidance: ${rewritten}`);
   return {
     action: "block",
-    output: result || "[Deeplake Memory] Command returned empty or the file does not exist in cloud storage.",
+    output: buildUnsupportedGuidance(),
     rewrittenCommand: rewritten,
   };
 }

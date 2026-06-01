@@ -99,6 +99,25 @@ export function buildDenyDecision(reason: string, description: string): ClaudePr
   return { command: "", description, deny: reason };
 }
 
+const MEMORY_RETRY_GUIDANCE =
+  "[RETRY REQUIRED] The command you tried is not available for ~/.deeplake/memory/. " +
+  "This virtual filesystem only supports bash builtins: cat, ls, grep, echo, jq, head, tail, sed, awk, wc, sort, find, etc. " +
+  "python, python3, node, and curl are NOT available. " +
+  "You MUST rewrite your command using only the bash tools listed above and try again. " +
+  "For example, to parse JSON use: cat file.json | jq '.key'. To count keys: cat file.json | jq 'keys | length'.";
+
+// Replace an unserviceable memory command with a harmless `echo` of the retry
+// guidance. Crucially this is an *allow* decision that REWRITES the command, so
+// the original (e.g. `sort /etc/passwd ~/.deeplake/memory/x > /tmp/out`) never
+// reaches the host shell — the agent just sees the guidance and retries. Used
+// for unconfigured and unroutable memory commands alike.
+function buildRetryGuidanceDecision(): ClaudePreToolDecision {
+  return buildAllowDecision(
+    `echo ${JSON.stringify(MEMORY_RETRY_GUIDANCE)}`,
+    "[DeepLake] unsupported command — rewrite using bash builtins",
+  );
+}
+
 const WRITE_EDIT_DENY_REASON =
   "Write and Edit tools cannot route through the Deeplake VFS at ~/.deeplake/memory/. " +
   "The pre-tool-use hook only intercepts Bash, Read, Grep, and Glob; tool-shape mismatches make a " +
@@ -245,12 +264,6 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
   }
 
   if (!shellCmd && (touchesMemory(cmd) || touchesMemory(toolPath))) {
-    const guidance = "[RETRY REQUIRED] The command you tried is not available for ~/.deeplake/memory/. " +
-      "This virtual filesystem only supports bash builtins: cat, ls, grep, echo, jq, head, tail, sed, awk, wc, sort, find, etc. " +
-      "python, python3, node, and curl are NOT available. " +
-      "You MUST rewrite your command using only the bash tools listed above and try again. " +
-      "For example, to parse JSON use: cat file.json | jq '.key'. To count keys: cat file.json | jq 'keys | length'.";
-
     // Fast-path: a clean single-file read attempt by an unsupported interpreter
     // (python/node/ruby/perl, no shell metacharacters) gets rewritten to
     // `cat '<path>'` so the agent doesn't burn a turn on a RETRY. Anything with
@@ -275,14 +288,15 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
     }
 
     logFn(`unsupported command, returning guidance: ${cmd}`);
-    return buildAllowDecision(
-      `echo ${JSON.stringify(guidance)}`,
-      "[DeepLake] unsupported command — rewrite using bash builtins",
-    );
+    return buildRetryGuidanceDecision();
   }
 
   if (!shellCmd) return null;
-  if (!config) return null;
+  // A memory command we could rewrite, but with no config the VFS backend is
+  // unreachable. Do NOT return null here — that hands the original command to
+  // the host shell. Return the retry guidance instead so the command never
+  // touches the real filesystem.
+  if (!config) return buildRetryGuidanceDecision();
 
   const table = process.env["HIVEMIND_TABLE"] ?? "memory";
   const sessionsTable = process.env["HIVEMIND_SESSIONS_TABLE"] ?? "sessions";
@@ -509,13 +523,14 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
     logFn(`direct query failed: ${e.message}`);
   }
 
-  // No compiled handler matched (or a direct query failed). Do NOT fall
-  // through to the shell executor: the shell bundle runs commands via
-  // just-bash which may invoke real host binaries, creating a code-execution
-  // surface for injected patterns in unhandled commands (e.g. `sort`, `cut`).
-  // Return null so the original tool runs unmodified; it will fail harmlessly
-  // because the virtual paths do not exist on the real filesystem.
-  return null;
+  // No compiled handler matched (or a direct query failed). Do NOT return null
+  // here: null hands the ORIGINAL command back to Claude Code's host shell, and
+  // the command only passed isSafe() — it isn't guaranteed to be confined to
+  // the (non-existent) virtual paths. `sort /etc/passwd ~/.deeplake/memory/x >
+  // /tmp/out` would still read/write real files. Replace it with the retry
+  // guidance so nothing reaches the host shell.
+  logFn(`unroutable memory command, returning guidance: ${shellCmd}`);
+  return buildRetryGuidanceDecision();
 }
 
 /* c8 ignore start */
