@@ -192,7 +192,7 @@ describe("runUpdate — branches", () => {
     });
     expect(code).toBe(0);
     expect(stdoutText()).toContain("npx @deeplake/hivemind@1.3.0 install");
-    expect(stdoutText()).toContain("npm install -g @deeplake/hivemind@latest");
+    expect(stdoutText()).toContain("npm install -g @deeplake/hivemind@1.3.0");
     expect(spawn).not.toHaveBeenCalled();
   });
 
@@ -263,7 +263,7 @@ describe("runUpdate — branches", () => {
     });
     expect(code).toBe(1);
     expect(stderrText()).toContain("Could not determine how hivemind was installed");
-    expect(stderrText()).toContain("npm install -g @deeplake/hivemind@latest");
+    expect(stderrText()).toContain("npm install -g @deeplake/hivemind@1.3.0");
     expect(spawn).not.toHaveBeenCalled();
   });
 });

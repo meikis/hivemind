@@ -340,7 +340,7 @@ export async function runUpdate(opts: UpdateOptions = {}): Promise<number> {
       log(``);
       log(`Or install globally so future updates are one command:`);
       log(``);
-      log(`  npm install -g ${PKG_NAME}@latest`);
+      log(`  npm install -g ${PKG_NAME}@${latest}`);
       return 0;
     }
 
@@ -362,7 +362,7 @@ export async function runUpdate(opts: UpdateOptions = {}): Promise<number> {
         return 0;
       }
       warn(`Could not determine how hivemind was installed (path: ${detected.installDir}).`);
-      warn(`Update manually: npm install -g ${PKG_NAME}@latest`);
+      warn(`Update manually: npm install -g ${PKG_NAME}@${latest}`);
       return 1;
     }
   }
