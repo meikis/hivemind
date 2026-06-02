@@ -224,6 +224,20 @@ export class DeeplakeFs implements IFileSystem {
         const rows = await client.query(sql);
         for (const row of rows) {
           const p = row["path"] as string;
+          // Goal/KPI-shaped paths belong exclusively to the dedicated
+          // hivemind_goals / hivemind_kpis tables. Pre-routing hook
+          // versions (<=0.7.4) wrote goals to the generic memory table
+          // as plain files; surfacing those here re-injects phantom
+          // goals into the VFS goal namespace — visible in `ls /goal/...`
+          // but absent from `hivemind goal list` (the CLI reads only the
+          // structured table). Skip them when the dedicated table is
+          // configured so the two views stay in sync. (When it is not
+          // configured, goal routing is off and these rows are the only
+          // copy, so we keep them.)
+          const kind = classifyPath(p);
+          if ((kind === "goal" && fs.goalsTable) || (kind === "kpi" && fs.kpisTable)) {
+            continue;
+          }
           fs.files.set(p, null);
           fs.meta.set(p, {
             size: Number(row["size_bytes"] ?? 0),

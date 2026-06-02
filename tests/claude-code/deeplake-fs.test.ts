@@ -222,6 +222,63 @@ async function makeFs(seed: Record<string, string | Buffer> = {}, mount = "/memo
   return { fs, client };
 }
 
+// ── goal/kpi namespace isolation from the generic memory table ────────────────
+// Regression for the VFS↔goals-table version skew: pre-routing hook versions
+// (<=0.7.4) wrote goals as plain files into the generic memory table. The
+// bootstrap must NOT re-surface those goal-shaped memory rows into the VFS goal
+// namespace when the dedicated hivemind_goals table is configured, or a goal is
+// visible in `ls /goal/...` yet absent from `hivemind goal list`.
+function makeSkewClient(opts: {
+  memoryPaths: string[];
+  goals: Array<{ goal_id: string; owner: string; status: string; content: string }>;
+}) {
+  return {
+    applyStorageCreds: vi.fn().mockResolvedValue(undefined),
+    ensureTable: vi.fn().mockResolvedValue(undefined),
+    ensureGoalsTable: vi.fn().mockResolvedValue(undefined),
+    ensureKpisTable: vi.fn().mockResolvedValue(undefined),
+    listTables: vi.fn().mockResolvedValue(["memory", "goals", "kpis"]),
+    query: vi.fn().mockImplementation(async (sql: string) => {
+      if (sql.includes("SELECT path, size_bytes, mime_type")) {
+        return opts.memoryPaths.map(p => ({ path: p, size_bytes: 1, mime_type: "text/markdown" }));
+      }
+      if (sql.includes("SELECT goal_id, owner, status, content")) {
+        return opts.goals.map(g => ({ ...g, created_at: "2026-01-01" }));
+      }
+      return [];
+    }),
+  };
+}
+
+describe("DeeplakeFs goal/kpi namespace isolation", () => {
+  it("excludes legacy goal-shaped rows from the memory table when goalsTable is set", async () => {
+    const client = makeSkewClient({
+      // Legacy phantom goal written to the generic memory table by the old hook,
+      // plus a normal memory note that must be preserved.
+      memoryPaths: ["/goal/alice/opened/legacy.md", "/notes/hello.md"],
+      // The real goal lives in the structured table.
+      goals: [{ goal_id: "real", owner: "alice", status: "opened", content: "real goal" }],
+    });
+    const fs = await DeeplakeFs.create(client as never, "memory", "/", "sessions", {
+      goalsTable: "goals",
+      kpisTable: "kpis",
+    });
+    const opened = await fs.readdir("/goal/alice/opened");
+    expect(opened).toContain("real.md");        // structured goal surfaces
+    expect(opened).not.toContain("legacy.md");  // phantom memory-table goal is hidden
+    expect(await fs.readdir("/notes")).toContain("hello.md"); // normal memory untouched
+  });
+
+  it("keeps goal-shaped memory rows when goalsTable is NOT configured (routing off)", async () => {
+    const client = makeSkewClient({
+      memoryPaths: ["/goal/alice/opened/legacy.md"],
+      goals: [],
+    });
+    const fs = await DeeplakeFs.create(client as never, "memory", "/");
+    // No dedicated table → the memory-table copy is the only one, keep it.
+    expect(await fs.readdir("/goal/alice/opened")).toContain("legacy.md");
+  });
+});
 
 describe("guessMime", () => {
   it("returns application/json for .json", () => expect(guessMime("foo.json")).toBe("application/json"));
