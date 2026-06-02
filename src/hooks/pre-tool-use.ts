@@ -411,7 +411,9 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
     if (lsDir === "/graph" || lsDir === "/graph/") {
       const body = "index.md\nfind/\nshow/\n";
       if (input.tool_name === "Read") {
-        const file_path = writeReadCacheFileFn(input.session_id, "/graph", body);
+        // Synthetic leaf (not "/graph" itself) so later reads of
+        // /graph/index.md or /graph/show/... can still create children.
+        const file_path = writeReadCacheFileFn(input.session_id, "/graph/_listing.txt", body);
         return buildReadDecision(file_path, "[hivemind graph] ls /graph");
       }
       return buildAllowDecision(`echo ${JSON.stringify(body)}`, `[hivemind graph] ls /graph`);
@@ -450,6 +452,16 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
         const capped = capOutputForClaude(content, { kind: label });
         return buildAllowDecision(`echo ${JSON.stringify(capped)}`, `[DeepLake direct] ${label} ${virtualPath}`);
       }
+      // The path was normalized to a concrete file but no VFS row exists — that
+      // is "not found", NOT an unsupported command. Falling through to the
+      // generic retry guidance would loop the agent on an already-valid shape.
+      logFn(`virtual path not found: ${virtualPath}`);
+      const notFound = `${virtualPath}: No such file or directory`;
+      if (input.tool_name === "Read") {
+        const file_path = writeReadCacheFileFn(input.session_id, virtualPath, notFound);
+        return buildReadDecision(file_path, `[DeepLake] not found: ${virtualPath}`);
+      }
+      return buildAllowDecision(`echo ${JSON.stringify(notFound)}`, `[DeepLake] not found: ${virtualPath}`);
     }
 
     if (!lsDir && input.tool_name === "Glob") {

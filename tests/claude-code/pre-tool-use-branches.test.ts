@@ -555,6 +555,21 @@ describe("processPreToolUse: find / grep / fallback", () => {
     expect(d?.command).toContain("[RETRY REQUIRED]");
   });
 
+  it("returns a not-found result (not retry guidance) for a concrete cat on a missing VFS file", async () => {
+    const d = await processPreToolUse(
+      { session_id: "s", tool_name: "Bash", tool_input: { command: "cat ~/.deeplake/memory/missing.md" }, tool_use_id: "t" },
+      {
+        config: BASE_CONFIG as any,
+        createApi: vi.fn(() => makeApi()),
+        executeCompiledBashCommandFn: vi.fn(async () => null) as any,
+        readVirtualPathContentFn: vi.fn(async () => null) as any,
+        logFn: vi.fn(),
+      },
+    );
+    expect(d?.command).toContain("No such file or directory");
+    expect(d?.command).not.toContain("RETRY REQUIRED");
+  });
+
   it("returns retry guidance for an isSafe-but-unroutable memory command instead of running it on the host", async () => {
     // `sort` passes isSafe() (it's an allowlisted builtin) but no VFS handler
     // serves it; it must be rewritten to the harmless echo guidance, not handed

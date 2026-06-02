@@ -253,6 +253,11 @@ export async function processCodexPreToolUse(
           }
           return { action: "block", output: content, rewrittenCommand: rewritten };
         }
+        // Concrete file path with no VFS row → "not found", not an unsupported
+        // command. Returning the generic guidance would mislead the model into
+        // rewriting an already-valid `cat`/`head`/… shape.
+        logFn(`virtual path not found: ${virtualPath}`);
+        return { action: "block", output: `${virtualPath}: No such file or directory`, rewrittenCommand: rewritten };
       }
 
       const lsMatch = rewritten.match(/^ls\s+(?:-[a-zA-Z]+\s+)*(\S+)?\s*$/);

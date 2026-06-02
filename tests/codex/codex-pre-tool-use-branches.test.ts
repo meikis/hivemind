@@ -98,7 +98,7 @@ describe("processCodexPreToolUse: pass-through + unsafe", () => {
     expect(d.output).toContain("not supported");
   });
 
-  it("blocks (does NOT run a shell or proceed to host) when the command shape isn't one the VFS can serve", async () => {
+  it("blocks with a not-found result (not generic guidance) for a concrete cat on a missing VFS file", async () => {
     const d = await processCodexPreToolUse(
       toolInput("cat ~/.deeplake/memory/nonexistent.md"),
       {
@@ -108,7 +108,8 @@ describe("processCodexPreToolUse: pass-through + unsafe", () => {
       },
     );
     expect(d.action).toBe("block");
-    expect(d.output).toContain("not supported");
+    expect(d.output).toContain("No such file or directory");
+    expect(d.output).not.toContain("not supported");
   });
 });
 
