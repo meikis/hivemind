@@ -23,6 +23,17 @@ export async function discoverOrgPosthogSessions(
 }
 
 // A stable id per org session: the uuid embedded in the filename, else the filename.
+// In-domain sessions for a skill: org sessions whose content matches a keyword.
+export async function discoverByKeyword(keyword: string, cap: number): Promise<OrgCandidate[]> {
+  const kw = keyword.replace(/'/g, "''");
+  const rows = await dquery(
+    `SELECT filename, COUNT(*) AS hits, MAX(creation_date) AS last FROM "${T}" ` +
+    `WHERE CAST(message AS TEXT) ILIKE '%${kw}%' ` +
+    `GROUP BY filename HAVING COUNT(*) >= 6 ORDER BY last DESC LIMIT ${cap}`,
+  );
+  return rows.map((r) => ({ filename: String(r.filename), hits: Number(r.hits) })).filter((c) => c.filename);
+}
+
 // Recent sessions across the org, any topic — for the satisfaction-judge probe
 // (we want a diverse mix of good/bad outcomes, not a domain filter).
 export async function discoverRecentSessions(cap: number): Promise<OrgCandidate[]> {
