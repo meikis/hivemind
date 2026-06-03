@@ -143,6 +143,28 @@ describe("resolveCrossFileCalls", () => {
     expect(resolveCrossFileCalls([a, b], [...a.nodes, ...b.nodes])).toHaveLength(0);
   });
 
+  it("skips a TYPE-ONLY namespace import as a value call target (ns.foo())", () => {
+    const a = extraction(
+      "src/a.ts",
+      [node("src/a.ts:c:function", "c", "src/a.ts", false)],
+      [{ caller_id: "src/a.ts:c:function", callee_name: "foo", receiver: "ns" }],
+      [{ local_name: "ns", imported_name: "*", kind: "namespace", specifier: "./b", type_only: true }],
+    );
+    const b = extraction("src/b.ts", [node("src/b.ts:foo:function", "foo", "src/b.ts")]);
+    expect(resolveCrossFileCalls([a, b], [...a.nodes, ...b.nodes])).toHaveLength(0);
+  });
+
+  it("skips a TYPE-ONLY named import as a value call target", () => {
+    const a = extraction(
+      "src/a.ts",
+      [node("src/a.ts:c:function", "c", "src/a.ts", false)],
+      [{ caller_id: "src/a.ts:c:function", callee_name: "Foo" }],
+      [{ local_name: "Foo", imported_name: "Foo", kind: "named", specifier: "./b", type_only: true }],
+    );
+    const b = extraction("src/b.ts", [node("src/b.ts:Foo:function", "Foo", "src/b.ts")]);
+    expect(resolveCrossFileCalls([a, b], [...a.nodes, ...b.nodes])).toHaveLength(0);
+  });
+
   it("dedups repeated calls to the same imported symbol", () => {
     const a = extraction(
       "src/a.ts",
@@ -227,6 +249,17 @@ describe("resolveHeritageEdges (B3)", () => {
     const iface = node("src/b.ts:Shape:interface", "Shape", "src/b.ts", true, "interface");
     const a = extraction("src/a.ts", [cls], [],
       [{ local_name: "Shape", imported_name: "Shape", kind: "named", specifier: "./b" }]);
+    const b = extraction("src/b.ts", [iface]);
+    const edge = heritage("src/a.ts:Impl:class", "Shape", "interface", "implements");
+    const out = resolveHeritageEdges([edge], [a, b], [...a.nodes, ...b.nodes]);
+    expect(out[0]!.target).toBe("src/b.ts:Shape:interface");
+  });
+
+  it("resolves implements of a TYPE-ONLY imported interface (heritage is type-position)", () => {
+    const cls = node("src/a.ts:Impl:class", "Impl", "src/a.ts", true, "class");
+    const iface = node("src/b.ts:Shape:interface", "Shape", "src/b.ts", true, "interface");
+    const a = extraction("src/a.ts", [cls], [],
+      [{ local_name: "Shape", imported_name: "Shape", kind: "named", specifier: "./b", type_only: true }]);
     const b = extraction("src/b.ts", [iface]);
     const edge = heritage("src/a.ts:Impl:class", "Shape", "interface", "implements");
     const out = resolveHeritageEdges([edge], [a, b], [...a.nodes, ...b.nodes]);

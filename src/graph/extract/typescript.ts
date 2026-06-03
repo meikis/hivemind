@@ -393,16 +393,16 @@ function extractImportBindings(
   specifier: string,
   result: FileExtraction,
 ): void {
-  // Type-only import (`import type { Foo } from "x"`): bindings exist only at
-  // the type level and can never be a value call target, so binding them would
-  // let a later `Foo()` resolve to a wrong value-call edge. Skip the whole
-  // statement. tree-sitter keeps the `type` keyword as an unnamed child, so we
-  // detect it from the statement text rather than the named-child list.
-  if (/^import\s+type\b/.test(importStmt.text.trimStart())) return;
+  // `import type { Foo } from "x"` is type-only for the WHOLE statement. We do
+  // NOT drop these: a type-only binding can't be a value call (calls
+  // resolution skips it) but IS the valid source for an extends/implements
+  // base (heritage resolution accepts it). tree-sitter keeps the `type`
+  // keyword as an unnamed child, so detect it from the statement text.
+  const stmtTypeOnly = /^import\s+type\b/.test(importStmt.text.trimStart());
 
   const clause = firstNamedChildOfTypes(importStmt, ["import_clause"]);
   if (clause === null) return; // bare `import "x"` — side-effect only
-  const push = (b: { local_name: string; imported_name: string; kind: "named" | "default" | "namespace" }) => {
+  const push = (b: { local_name: string; imported_name: string; kind: "named" | "default" | "namespace"; type_only?: boolean }) => {
     result.import_bindings!.push({ ...b, specifier });
   };
 
@@ -411,27 +411,27 @@ function extractImportBindings(
     if (child === null) continue;
     if (child.type === "identifier") {
       // default import: `import foo from "x"`
-      push({ local_name: child.text, imported_name: "default", kind: "default" });
+      push({ local_name: child.text, imported_name: "default", kind: "default", type_only: stmtTypeOnly });
     } else if (child.type === "namespace_import") {
       // `import * as ns from "x"`
       const id = firstNamedChildOfTypes(child, ["identifier"]);
-      if (id !== null) push({ local_name: id.text, imported_name: "*", kind: "namespace" });
+      if (id !== null) push({ local_name: id.text, imported_name: "*", kind: "namespace", type_only: stmtTypeOnly });
     } else if (child.type === "named_imports") {
       // `import { a, b as c } from "x"`
       for (let j = 0; j < child.namedChildCount; j++) {
         const spec = child.namedChild(j);
         if (spec === null || spec.type !== "import_specifier") continue;
-        // Per-specifier type-only (`import { type Foo }` / `type Foo as Bar`)
-        // — skip just this one. But NOT `import { type as value }`, which is a
-        // VALUE import of an export literally named `type` (the `as` after
-        // `type` means `type` is the imported name): negative-lookahead `as`.
-        if (/^type\s+(?!as\b)/.test(spec.text)) continue;
+        // Per-specifier type-only (`import { type Foo }` / `type Foo as Bar`).
+        // NOT `import { type as value }`, which is a VALUE import of an export
+        // literally named `type` (the `as` after `type` means `type` is the
+        // imported name): negative-lookahead on `as`.
+        const specTypeOnly = stmtTypeOnly || /^type\s+(?!as\b)/.test(spec.text);
         const nameNode = spec.childForFieldName("name");
         const aliasNode = spec.childForFieldName("alias");
         const imported = nameNode !== null ? nameNode.text : null;
         if (imported === null) continue;
         const local = aliasNode !== null ? aliasNode.text : imported;
-        push({ local_name: local, imported_name: imported, kind: "named" });
+        push({ local_name: local, imported_name: imported, kind: "named", type_only: specTypeOnly });
       }
     }
   }

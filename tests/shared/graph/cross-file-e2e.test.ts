@@ -154,6 +154,27 @@ describe("cross-file calls — extractor → snapshot", () => {
     expect(ext?.target).toBe("src/a.ts:Base:class");
   });
 
+  it("B3: implements an interface imported with `import type` still resolves", () => {
+    const a = extractTypeScript(
+      `import type { Shape } from "./b";\nexport class Impl implements Shape {}\n`,
+      "src/a.ts",
+    );
+    const b = extractTypeScript(`export interface Shape { x: number }\n`, "src/b.ts");
+    const snap = buildSnapshot([a, b], meta(), obs());
+    const impl = snap.links.find((e) => e.relation === "implements" && e.source === "src/a.ts:Impl:class");
+    expect(impl?.target).toBe("src/b.ts:Shape:interface");
+  });
+
+  it("B3: a type-only import is still NOT a value call target", () => {
+    const a = extractTypeScript(
+      `import type { Shape } from "./b";\nexport function run(): Shape { return Shape(); }\n`,
+      "src/a.ts",
+    );
+    const b = extractTypeScript(`export interface Shape { x: number }\n`, "src/b.ts");
+    const snap = buildSnapshot([a, b], meta(), obs());
+    expect(snap.links.some((e) => e.relation === "calls" && e.target === "src/b.ts:Shape:interface")).toBe(false);
+  });
+
   it("B3: extends an external base keeps the unresolved placeholder", () => {
     const a = extractTypeScript(
       `import { Component } from "react";\nexport class Sub extends Component {}\n`,

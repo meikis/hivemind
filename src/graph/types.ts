@@ -214,4 +214,11 @@ export interface ImportBinding {
   kind: "named" | "default" | "namespace";
   /** Raw module specifier, e.g. "./foo" or "../bar/baz". */
   specifier: string;
+  /**
+   * True for `import type {...}` and per-specifier `import { type Foo }`. A
+   * type-only binding can never be a VALUE call target (calls resolution skips
+   * it), but it IS the legitimate source for an `extends`/`implements` base
+   * (heritage resolution accepts it). Absent/false = a normal value import.
+   */
+  type_only?: boolean;
 }
