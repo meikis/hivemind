@@ -58,4 +58,30 @@ Whether applied edits actually improve future sessions (Phase-3 A/B); per-user i
 injection is in the SessionStart system prompt, which capture doesn't record); judge at full scale under real
 aggregate sycophancy load.
 
-_Approx spend across the spike: ~$45 in LLM calls. Data/outputs are gitignored (contain real session content)._
+## E2E on org-shared skills + the decisive null
+
+Scoped to org-shared skills (`--author` / org `skills` table), per the goal of improving team skills.
+
+- **Org-wide B2 pass** (150 sessions → 23 scored → 7 dissatisfied) routed 7 competence-filtered edit
+  proposals across 5 org skills. Proposer works at org scale.
+- **Offline validation does NOT work — four independent setups all ~0:** absolute-judge (A),
+  pairwise+proprietary e2e (`pg-deeplake-test-crash-debugging`: skill-vs-no-skill +0.00, ablation-recovery
+  −0.07), and crisp skill-relevant pairwise (−0.17). Diagnostic root cause: hivemind skills are mostly
+  **behavioral/process + proprietary-context** skills whose value lives in **real multi-turn execution**
+  (avoiding a bad trajectory), which a **one-shot judged "describe your solution"** cannot capture — there's
+  no plan-mode-stall to prevent in a single shot. SkillOpt's loop fits verifiable one-shot-answer benchmarks
+  (SearchQA); hivemind skills aren't that shape.
+
+**Net:** the **proposer is the working, valuable half**; **offline rollout+judge cannot validate skill
+improvement** for these skills. Validation requires **real/online use** (A/B skill-present vs absent on live
+sessions, measuring real success/satisfaction).
+
+## Deliverable for real-world testing
+`npm run dataprep-org` (mine) → `org-optimize` (propose) → `assemble-optimized` writes, to
+`out/optimized-skills/`, `original` + `optimized` markdown for 4 real org skills (goals-capture-resume-pattern
++3 rules, posthog-event-smoke-testing +1, pybind-type-stub-debugging +1, hivemind-usage-reporting +1) plus 1
+proposed NEW shared skill (`execute-not-block-on-safe-read-ops`). Each edit carries a provenance comment
+(source session + the failure it fixes). **To real-test:** deploy an `optimized` skill to the org, use it on
+real tasks, and compare real outcomes vs the `original` — the only valid validation per the finding above.
+
+_Approx spend across the spike: ~$85 in LLM calls. Data/outputs are gitignored (contain real session content)._

@@ -6,7 +6,14 @@
   "description": "THROWAWAY research spike: does SkillOpt-style optimization measurably improve a real hivemind SKILL.md against an LLM-judge reward derived from its source sessions? Not shipped.",
   "scripts": {
     "dataprep": "tsx src/dataprep.ts",
+    "dataprep-org": "tsx src/dataprep-org.ts",
     "calibrate": "tsx src/calibrate.ts",
-    "run": "tsx src/loop.ts"
+    "run": "tsx src/loop.ts",
+    "b2-probe": "tsx src/b2-probe.ts",
+    "b2-gradient": "tsx src/b2-gradient.ts",
+    "org-optimize": "tsx src/org-optimize.ts",
+    "e2e": "tsx src/e2e.ts",
+    "e2e-focused": "tsx src/e2e-focused.ts",
+    "assemble-optimized": "tsx src/assemble-optimized.ts"
   }
 }
