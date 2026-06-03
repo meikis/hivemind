@@ -26,9 +26,9 @@ describe("listActiveOrgSkills", () => {
 
     const got = listActiveOrgSkills(root);
     expect(got).toEqual([
-      { name: "pg-deeplake-test-crash-debugging", author: "sasun" },
-      { name: "posthog-event-smoke-testing", author: "kamo.aghbalyan" },
-    ]); // sorted by name; exactly the 2 valid org skills
+      { name: "pg-deeplake-test-crash-debugging", author: "sasun", version: 1 },
+      { name: "posthog-event-smoke-testing", author: "kamo.aghbalyan", version: 1 },
+    ]); // sorted by name; exactly the 2 valid org skills; version defaults to 1 (no SKILL.md)
     expect(got).toHaveLength(2); // count: bare/malformed/file all dropped
   });
 
@@ -38,7 +38,16 @@ describe("listActiveOrgSkills", () => {
 
   it("splits on the LAST `--` so authors with hyphens survive", () => {
     fs.mkdirSync(path.join(root, "some-skill--first-last"));
-    expect(listActiveOrgSkills(root)).toEqual([{ name: "some-skill", author: "first-last" }]);
+    expect(listActiveOrgSkills(root)).toEqual([{ name: "some-skill", author: "first-last", version: 1 }]);
+  });
+
+  it("reads the skill version from SKILL.md frontmatter (enables v1-vs-v2)", () => {
+    fs.mkdirSync(path.join(root, "evolving-skill--sasun"));
+    fs.writeFileSync(
+      path.join(root, "evolving-skill--sasun", "SKILL.md"),
+      "---\nname: evolving-skill\nversion: 5\n---\nbody",
+    );
+    expect(listActiveOrgSkills(root)).toEqual([{ name: "evolving-skill", author: "sasun", version: 5 }]);
   });
 });
 
@@ -70,7 +79,7 @@ describe("buildSkillsActiveInsert", () => {
     pluginVersion: "0.7.99",
     sessionId: "S1",
     cwd: "/home/kamo/proj",
-    skills: [{ name: "pg-deeplake-test-crash-debugging", author: "sasun" }],
+    skills: [{ name: "pg-deeplake-test-crash-debugging", author: "sasun", version: 3 }],
     bucket: 1,
     ts: "2026-06-03T00:00:00.000Z",
   };
@@ -89,7 +98,7 @@ describe("buildSkillsActiveInsert", () => {
     const entry = JSON.parse(m![1]);
     expect(entry.type).toBe("skills_active");
     expect(entry.session_id).toBe("S1");
-    expect(entry.skills).toEqual([{ name: "pg-deeplake-test-crash-debugging", author: "sasun" }]);
+    expect(entry.skills).toEqual([{ name: "pg-deeplake-test-crash-debugging", author: "sasun", version: 3 }]);
     expect(entry.skills_count).toBe(1);
     expect(entry.ab_bucket).toBe(1);
   });

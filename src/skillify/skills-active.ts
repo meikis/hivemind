@@ -22,6 +22,18 @@ import { sqlStr } from "../utils/sql.js";
 export interface ActiveSkill {
   name: string;
   author: string;
+  version: number;
+}
+
+/** Read `version:` from a SKILL.md frontmatter; defaults to 1 if absent/unreadable. */
+function readSkillVersion(skillsRoot: string, dir: string): number {
+  try {
+    const body = fs.readFileSync(path.join(skillsRoot, dir, "SKILL.md"), "utf8");
+    const m = body.match(/^version:\s*(\d+)/m);
+    return m ? Number(m[1]) : 1;
+  } catch {
+    return 1;
+  }
 }
 
 export function defaultSkillsRoot(): string {
@@ -41,7 +53,11 @@ export function listActiveOrgSkills(skillsRoot: string = defaultSkillsRoot()): A
     if (!e.isDirectory()) continue;
     const idx = e.name.lastIndexOf("--");
     if (idx <= 0 || idx + 2 >= e.name.length) continue; // bare local skill, or malformed → skip
-    out.push({ name: e.name.slice(0, idx), author: e.name.slice(idx + 2) });
+    out.push({
+      name: e.name.slice(0, idx),
+      author: e.name.slice(idx + 2),
+      version: readSkillVersion(skillsRoot, e.name), // enables v1-vs-v2 comparison
+    });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
