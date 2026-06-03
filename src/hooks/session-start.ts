@@ -14,6 +14,8 @@ import { loadConfig } from "../config.js";
 import { DeeplakeApi } from "../deeplake-api.js";
 import { sqlStr } from "../utils/sql.js";
 import { projectNameFromCwd } from "../utils/project-name.js";
+import { buildSessionPath } from "../utils/session-path.js";
+import { listActiveOrgSkills, sessionBucket, buildSkillsActiveInsert } from "../skillify/skills-active.js";
 import { readStdin } from "../utils/stdin.js";
 import { log as _log } from "../utils/debug.js";
 import { getInstalledVersion } from "../utils/version-check.js";
@@ -212,6 +214,35 @@ async function main(): Promise<void> {
           await api.ensureSessionsTable(sessionsTable);
           await createPlaceholder(api, table, input.session_id, input.cwd ?? "", config.userName, config.orgName, config.workspaceId, pluginVersion);
           log("placeholder created");
+
+          // Skill attribution (measurement): record which org-shared skills were in
+          // context this session + a deterministic A/B bucket. This is the label that
+          // makes skill value measurable (sessions with vs without skill X). Org skills
+          // only (`<name>--<author>` dirs); local-only skills excluded. Opt-out:
+          // HIVEMIND_SKILL_ATTRIBUTION=0. Swallowed — must never fail SessionStart.
+          if (process.env.HIVEMIND_SKILL_ATTRIBUTION !== "0") {
+            try {
+              const skills = listActiveOrgSkills();
+              const attrSessionPath = buildSessionPath(config, input.session_id);
+              const sql = buildSkillsActiveInsert({
+                sessionsTable,
+                sessionPath: attrSessionPath,
+                filename: attrSessionPath.split("/").pop() ?? "",
+                userName: config.userName,
+                projectName: projectNameFromCwd(input.cwd),
+                pluginVersion,
+                sessionId: input.session_id,
+                cwd: input.cwd,
+                skills,
+                bucket: sessionBucket(input.session_id),
+                ts: new Date().toISOString(),
+              });
+              await api.query(sql);
+              log(`skills_active recorded: ${skills.length} org skills, bucket ${sessionBucket(input.session_id)}`);
+            } catch (e: any) {
+              log(`skills_active attribution failed (swallowed): ${e?.message ?? e}`);
+            }
+          }
         } else {
           const reason = process.env.HIVEMIND_CAPTURE === "false"
             ? "HIVEMIND_CAPTURE=false"
