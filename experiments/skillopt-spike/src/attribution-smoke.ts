@@ -4,7 +4,7 @@
 import { dquery } from "./deeplake.ts";
 import {
   listActiveOrgSkills, sessionBucket, buildSkillsActiveInsert,
-} from "../../src/skillify/skills-active.ts";
+} from "../../../src/skillify/skills-active.ts";
 
 async function main() {
   const sessionId = "skillopt-smoke-" + new Date().toISOString().replace(/[:.]/g, "-");

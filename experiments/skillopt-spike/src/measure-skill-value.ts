@@ -18,11 +18,12 @@ const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.l
 
 // session filenames that have a skills_active row (optionally containing skill X)
 async function sessionsWithLabel(containsSkill: boolean): Promise<string[]> {
+  // Match quoted value tokens — spacing-independent (pg serializes jsonb as `"k": "v"`).
   const nameClause = containsSkill
-    ? `AND CAST(message AS TEXT) ILIKE '%"name":"${SKILL.replace(/'/g, "''")}"%'`
-    : `AND CAST(message AS TEXT) NOT ILIKE '%"name":"${SKILL.replace(/'/g, "''")}"%'`;
+    ? `AND CAST(message AS TEXT) ILIKE '%"${SKILL.replace(/'/g, "''")}"%'`
+    : `AND CAST(message AS TEXT) NOT ILIKE '%"${SKILL.replace(/'/g, "''")}"%'`;
   const rows = await dquery(
-    `SELECT DISTINCT filename FROM "sessions" WHERE CAST(message AS TEXT) ILIKE '%"type":"skills_active"%' ${nameClause} LIMIT ${PER}`,
+    `SELECT DISTINCT filename FROM "sessions" WHERE CAST(message AS TEXT) ILIKE '%"skills_active"%' ${nameClause} LIMIT ${PER}`,
   );
   return rows.map((r) => String(r.filename));
 }
@@ -37,7 +38,7 @@ async function score(files: string[]) {
 
 async function main() {
   console.log(`measuring value of skill='${SKILL}' from skills_active attribution rows\n`);
-  const total = await dquery(`SELECT COUNT(*) AS n FROM "sessions" WHERE CAST(message AS TEXT) ILIKE '%"type":"skills_active"%'`);
+  const total = await dquery(`SELECT COUNT(*) AS n FROM "sessions" WHERE CAST(message AS TEXT) ILIKE '%"skills_active"%'`);
   const nLabels = Number(total[0]?.n ?? 0);
   if (nLabels === 0) {
     console.log("No skills_active rows yet. Deploy the branch (SessionStart writes them) and let");
