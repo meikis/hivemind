@@ -322,6 +322,13 @@ describe("owner-process liveness (procInfo / findSessionOwner / ownerLiveness)",
     expect(mod.ownerLiveness(sid)).toBe("dead");
   });
 
+  it.runIf(hasProc)("ownerLiveness reports 'dead' when the live pid's comm no longer matches", () => {
+    const sid = newSessionId();
+    const info = me()!;
+    writeOwner(sid, { pid: process.pid, comm: "totally-different-comm", starttime: info.starttime });
+    expect(mod.ownerLiveness(sid)).toBe("dead");
+  });
+
   it.runIf(hasProc)("ownerLiveness reports 'dead' on pid reuse (starttime mismatch)", () => {
     const sid = newSessionId();
     const info = me()!;

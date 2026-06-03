@@ -221,6 +221,11 @@ describe("excludeActiveSessions", () => {
     // noPath is kept (can't identify); row("a") is dropped (predicate true)
     expect(out).toEqual([noPath]);
   });
+
+  it("keeps a row whose path yields an empty session id (can't prove liveness)", () => {
+    const weird = { summary: "x", path: "/", last_update_date: "2026-05-30" };
+    expect(excludeActiveSessions([weird], "me", () => true)).toEqual([weird]);
+  });
 });
 
 describe("pickResumeBrief", () => {
@@ -338,6 +343,30 @@ describe("pickResumeBrief", () => {
     // one CTA, two pins
     expect((b!.brief.match(/📌/g) ?? []).length).toBe(2);
     expect((b!.brief.match(/Ask me for the full thread/g) ?? []).length).toBe(1);
+  });
+
+  it("falls back to default table/apiUrl/workspaceId when config + creds omit them", async () => {
+    loadConfigMock.mockReturnValue({});                 // no tableName → '?? "memory"'
+    queryMock.mockResolvedValue([{ summary: real("Resume on defaults"), path: "/s/a.md", last_update_date: "2026-05-30" }]);
+    const b = await pickResumeBrief({ token: "t", userName: "u", orgId: "o" } as never); // no apiUrl / workspaceId
+    expect(b?.brief).toContain("Resume on defaults");
+  });
+
+  it("surfaces a pathless real summary with no id line (empty session id)", async () => {
+    queryMock.mockResolvedValue([{ summary: real("Do the no-path thing") }]); // no path, no date
+    const b = await pickResumeBrief(CREDS);
+    expect(b?.brief).toContain("Do the no-path thing");
+    expect(b?.brief).not.toContain("session ");
+    expect(b?.brief).not.toContain("↳");
+  });
+
+  it("renders an age-only id line when a pathless summary has a date", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-01T12:00:00Z"));
+    queryMock.mockResolvedValue([{ summary: real("Do dated no-path"), last_update_date: "2026-06-01T06:00:00Z" }]);
+    const b = await pickResumeBrief(CREDS);
+    expect(b?.brief).toContain("↳ earlier today");
+    expect(b?.brief).not.toContain("session ");
   });
 
   it("shows the session id of the surfaced summary (copy-pasteable for --resume)", async () => {

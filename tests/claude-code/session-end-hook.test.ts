@@ -22,6 +22,8 @@ const wikiLogMock = vi.fn();
 const tryAcquireLockMock = vi.fn();
 const releaseLockMock = vi.fn();
 const markSessionEndedMock = vi.fn();
+const parseTranscriptMock = vi.fn();
+const appendUsageRecordMock = vi.fn();
 const debugLogMock = vi.fn();
 
 vi.mock("../../src/utils/stdin.js", () => ({ readStdin: (...a: any[]) => stdinMock(...a) }));
@@ -35,6 +37,12 @@ vi.mock("../../src/hooks/summary-state.js", () => ({
   tryAcquireLock: (...a: any[]) => tryAcquireLockMock(...a),
   releaseLock: (...a: any[]) => releaseLockMock(...a),
   markSessionEnded: (...a: any[]) => markSessionEndedMock(...a),
+}));
+vi.mock("../../src/notifications/transcript-parser.js", () => ({
+  parseTranscript: (...a: any[]) => parseTranscriptMock(...a),
+}));
+vi.mock("../../src/notifications/usage-tracker.js", () => ({
+  appendUsageRecord: (...a: any[]) => appendUsageRecordMock(...a),
 }));
 vi.mock("../../src/utils/debug.js", () => ({
   log: (_tag: string, msg: string) => debugLogMock(msg),
@@ -64,6 +72,8 @@ beforeEach(() => {
   tryAcquireLockMock.mockReset().mockReturnValue(true);
   releaseLockMock.mockReset();
   markSessionEndedMock.mockReset();
+  parseTranscriptMock.mockReset().mockReturnValue({ memorySearchCount: 0, memorySearchBytes: 0 });
+  appendUsageRecordMock.mockReset();
   debugLogMock.mockReset();
 });
 
@@ -108,6 +118,29 @@ describe("session-end hook", () => {
     expect(wikiLogMock).toHaveBeenCalledWith(
       expect.stringContaining("periodic worker already running for sid-1, skipping"),
     );
+  });
+
+  it("records session usage when the transcript has memory searches", async () => {
+    stdinMock.mockResolvedValue({ session_id: "sid-1", cwd: "/proj", transcript_path: "/t.jsonl" });
+    parseTranscriptMock.mockReturnValue({ memorySearchCount: 3, memorySearchBytes: 100 });
+    await runHook();
+    expect(parseTranscriptMock).toHaveBeenCalledWith("/t.jsonl", "sid-1");
+    expect(appendUsageRecordMock).toHaveBeenCalledWith({ memorySearchCount: 3, memorySearchBytes: 100 });
+  });
+
+  it("skips the usage record when the transcript has no memory searches", async () => {
+    stdinMock.mockResolvedValue({ session_id: "sid-1", cwd: "/proj", transcript_path: "/t.jsonl" });
+    parseTranscriptMock.mockReturnValue({ memorySearchCount: 0, memorySearchBytes: 0 });
+    await runHook();
+    expect(appendUsageRecordMock).not.toHaveBeenCalled();
+  });
+
+  it("swallows a transcript-parse error and still proceeds to spawn", async () => {
+    stdinMock.mockResolvedValue({ session_id: "sid-1", cwd: "/proj", transcript_path: "/t.jsonl" });
+    parseTranscriptMock.mockImplementation(() => { throw new Error("bad transcript"); });
+    await runHook();
+    expect(appendUsageRecordMock).not.toHaveBeenCalled();
+    expect(spawnMock).toHaveBeenCalled();
   });
 
   it("marks the session ended (so other sessions stop treating it as live) even when the lock is held", async () => {
