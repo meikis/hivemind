@@ -334,6 +334,10 @@ function findMatches(snap: GraphSnapshot, pattern: string): GraphNode[] {
       if (ra !== rb) return ra - rb;
       return a.id.localeCompare(b.id);
     });
+    // D3 zero-dep fuzzy FALLBACK: only when there's no exact substring hit, so
+    // the existing behavior is untouched when matches exist. Offers typo-
+    // tolerant suggestions (e.g. "pushSnaphot" → pushSnapshot).
+    if (matches.length === 0) return fuzzyMatches(snap, needle);
     return matches;
   }
 
@@ -352,6 +356,48 @@ function findMatches(snap: GraphSnapshot, pattern: string): GraphNode[] {
     return a.id.localeCompare(b.id);
   });
   return matches;
+}
+
+/**
+ * D3 zero-dependency fuzzy fallback. Returns nodes whose LABEL is within a
+ * small edit distance of `needle`, sorted by distance then id. The threshold
+ * scales with needle length (floor(len/4), min 1) so short tokens stay strict.
+ * Deterministic; capped at 25 to keep output bounded.
+ */
+function fuzzyMatches(snap: GraphSnapshot, needle: string): GraphNode[] {
+  if (needle.length < 3) return []; // too short for meaningful fuzzy matching
+  const maxDist = Math.max(1, Math.floor(needle.length / 4));
+  const scored: Array<{ n: GraphNode; d: number }> = [];
+  for (const n of snap.nodes) {
+    const d = editDistance(needle, n.label.toLowerCase(), maxDist);
+    if (d <= maxDist) scored.push({ n, d });
+  }
+  scored.sort((a, b) => (a.d !== b.d ? a.d - b.d : a.n.id.localeCompare(b.n.id)));
+  return scored.slice(0, 25).map((s) => s.n);
+}
+
+/**
+ * Levenshtein edit distance with early exit once the running minimum of a row
+ * exceeds `cap` (returns cap+1 — the caller only cares about "<= cap"). Bounded
+ * O(len(a)*len(b)) but cheap for symbol-length strings.
+ */
+function editDistance(a: string, b: string, cap: number): number {
+  if (Math.abs(a.length - b.length) > cap) return cap + 1;
+  let prev = new Array<number>(b.length + 1);
+  let cur = new Array<number>(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    cur[0] = i;
+    let rowMin = cur[0];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      if (cur[j] < rowMin) rowMin = cur[j];
+    }
+    if (rowMin > cap) return cap + 1; // whole row already exceeds the cap
+    [prev, cur] = [cur, prev];
+  }
+  return prev[b.length]!;
 }
 
 function renderFind(snap: GraphSnapshot, pattern: string, baseDir: string, worktreeId: string): string {

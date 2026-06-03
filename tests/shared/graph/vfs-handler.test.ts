@@ -177,6 +177,30 @@ describe("handleGraphVfs", () => {
     if (r.kind === "ok") expect(r.body).toContain("src/b.ts:fooHelper:function");
   });
 
+  it("find fuzzy fallback (D3): a typo with no substring hit suggests the close symbol", () => {
+    seed();
+    // "usermdel" is not a substring of any node, but it's edit-distance 1 from
+    // "usermodel" (UserModel lowercased) → fuzzy fallback surfaces it.
+    const r = handleGraphVfs("find/usermdel", cwd);
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok") expect(r.body).toContain("src/b.ts:UserModel:class");
+  });
+
+  it("find fuzzy does NOT trigger when an exact substring match exists", () => {
+    seed();
+    // 'foo' has substring hits (foo, fooHelper); fuzzy must not add unrelated nodes.
+    const r = handleGraphVfs("find/foo", cwd);
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok") expect(r.body).not.toContain("UserModel");
+  });
+
+  it("find on a pattern with no substring and no near match → No matches", () => {
+    seed();
+    const r = handleGraphVfs("find/zzqqxx", cwd);
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok") expect(r.body).toContain("No matches");
+  });
+
   it("find on empty pattern → not-found with guidance", () => {
     seed();
     const r = handleGraphVfs("find/", cwd);
