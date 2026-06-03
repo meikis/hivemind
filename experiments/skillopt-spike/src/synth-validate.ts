@@ -29,10 +29,10 @@ async function insertMsg(filename: string, entry: Record<string, unknown>) {
 
 async function genTranscript(quality: "good" | "bad", i: number): Promise<string> {
   const want = quality === "good"
-    ? "ends RESOLVED with the user clearly satisfied (e.g. 'perfect, that fixed it, thanks')"
-    : "ends UNRESOLVED with the user frustrated (e.g. repeated corrections, 'no that's wrong', 'still failing', gives up)";
+    ? "The assistant nails it: correct root cause, a concrete working fix with real commands, the test suite goes GREEN, and the user explicitly confirms success ('perfect, all tests pass, that fixed it — thanks'). Unambiguously resolved."
+    : "The assistant flails: wrong diagnoses, fixes that don't compile or don't help, the crash persists, the user repeatedly corrects it ('no, that's wrong', 'still crashing', 'you broke the build') and finally gives up unresolved. Unambiguously a failure.";
   const { text } = await callLLM("target", "You write realistic short AI-assistant session transcripts. Output only the transcript.",
-    `Write a SHORT realistic transcript (~8 turns, USER:/ASSISTANT: lines) of a pg_deeplake test-crash debugging session (WAL/streaming/scan crash in the Deeplake C++/pg backend) that ${want}. Variation seed ${i}. Make it concrete and technical. Transcript only.`);
+    `Write a SHORT realistic transcript (~8 turns, USER:/ASSISTANT: lines) of a pg_deeplake test-crash debugging session (WAL/streaming/scan crash in the Deeplake C++/pg backend). ${want} Variation seed ${i}. Concrete and technical. Transcript only.`);
   return text;
 }
 
@@ -86,8 +86,8 @@ async function main() {
     // GOOD sessions: skill X present; SKILL_Y present in a random half.
     // BAD sessions: skill X absent; SKILL_Y present in a random half.
     console.log("seeding synthetic sessions...");
-    await mapLimit([...Array(N).keys()], 4, async (i) => { await seedSession("good", i, true, i % 2 === 0); });
-    await mapLimit([...Array(N).keys()], 4, async (i) => { await seedSession("bad", i, false, i % 2 === 0); });
+    await mapLimit([...Array(N).keys()], 2, async (i) => { await seedSession("good", i, true, i % 2 === 0); });
+    await mapLimit([...Array(N).keys()], 2, async (i) => { await seedSession("bad", i, false, i % 2 === 0); });
     console.log(`seeded ${N * 2} sessions.`);
   } else {
     console.log("SPIKE_SYNTH_SEED=0 → measuring existing seeded data only.");

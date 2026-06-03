@@ -12,7 +12,9 @@ const creds: Creds = JSON.parse(
 
 export const SESSIONS_TABLE = process.env.HIVEMIND_SESSIONS_TABLE || "sessions";
 
-const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+// 403 included: Deeplake/CF returns transient HTML 403s on bursty inserts that the real
+// hivemind client also retries. A genuine auth 403 just exhausts retries and surfaces.
+const RETRYABLE = new Set([403, 429, 500, 502, 503, 504]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function dquery(sql: string): Promise<Record<string, unknown>[]> {
