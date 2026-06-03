@@ -293,17 +293,44 @@ function renderIndex(snap: GraphSnapshot, baseDir: string, cwd: string): string 
  * Substring search on node id + label, ranked (exact label > prefix > id
  * contains > label contains), tie-broken by id. Shared by find/ and query/.
  * Returns ALL matches sorted; callers cap as needed.
+ *
+ * D1 multi-token: a pattern may carry several tokens separated by whitespace
+ * or `+` (e.g. `auth+middleware` or, quoted, `"auth middleware"`). A node
+ * matches only when EVERY token appears in its id or label (AND), ranked by
+ * the summed per-token rank. A single token preserves the original behavior
+ * exactly.
  */
 function findMatches(snap: GraphSnapshot, pattern: string): GraphNode[] {
-  const needle = pattern.toLowerCase();
+  const tokens = pattern.toLowerCase().split(/[\s+]+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return [];
+
+  if (tokens.length === 1) {
+    const needle = tokens[0]!;
+    const matches: GraphNode[] = [];
+    for (const n of snap.nodes) {
+      if (n.id.toLowerCase().includes(needle) || n.label.toLowerCase().includes(needle)) matches.push(n);
+    }
+    matches.sort((a, b) => {
+      const ra = rank(a, needle);
+      const rb = rank(b, needle);
+      if (ra !== rb) return ra - rb;
+      return a.id.localeCompare(b.id);
+    });
+    return matches;
+  }
+
+  // Multi-token: require ALL tokens present somewhere in id or label.
   const matches: GraphNode[] = [];
   for (const n of snap.nodes) {
-    if (n.id.toLowerCase().includes(needle) || n.label.toLowerCase().includes(needle)) matches.push(n);
+    const id = n.id.toLowerCase();
+    const lbl = n.label.toLowerCase();
+    if (tokens.every((t) => id.includes(t) || lbl.includes(t))) matches.push(n);
   }
+  const score = (n: GraphNode): number => tokens.reduce((s, t) => s + rank(n, t), 0);
   matches.sort((a, b) => {
-    const ra = rank(a, needle);
-    const rb = rank(b, needle);
-    if (ra !== rb) return ra - rb;
+    const sa = score(a);
+    const sb = score(b);
+    if (sa !== sb) return sa - sb;
     return a.id.localeCompare(b.id);
   });
   return matches;

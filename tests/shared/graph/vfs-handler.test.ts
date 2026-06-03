@@ -157,6 +157,26 @@ describe("handleGraphVfs", () => {
     }
   });
 
+  it("find multi-token (D1) ANDs the tokens: foo+helper matches only fooHelper", () => {
+    seed();
+    const r = handleGraphVfs("find/foo+helper", cwd);
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok") {
+      // fooHelper's id contains both "foo" and "helper".
+      expect(r.body).toContain("src/b.ts:fooHelper:function");
+      // plain foo (src/a.ts:foo) lacks "helper" → excluded.
+      expect(r.body).not.toContain("src/a.ts:foo:function");
+      expect(r.body).toContain("1 match");
+    }
+  });
+
+  it("find multi-token tolerates whitespace separator too", () => {
+    seed();
+    const r = handleGraphVfs("find/foo helper", cwd);
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok") expect(r.body).toContain("src/b.ts:fooHelper:function");
+  });
+
   it("find on empty pattern → not-found with guidance", () => {
     seed();
     const r = handleGraphVfs("find/", cwd);
