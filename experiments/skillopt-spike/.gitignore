@@ -1,0 +1,4 @@
+# Session-derived tasks + run outputs contain real session content — never commit.
+data/
+out/
+node_modules/
