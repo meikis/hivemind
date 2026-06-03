@@ -84,4 +84,20 @@ proposed NEW shared skill (`execute-not-block-on-safe-read-ops`). Each edit carr
 (source session + the failure it fixes). **To real-test:** deploy an `optimized` skill to the org, use it on
 real tasks, and compare real outcomes vs the `original` — the only valid validation per the finding above.
 
-_Approx spend across the spike: ~$85 in LLM calls. Data/outputs are gitignored (contain real session content)._
+## UPDATE: REAL multi-turn agentic rollouts DO find signal
+
+The earlier ~0 results were an artifact of one-shot "describe your answer" grading with tools disabled —
+NOT proof skills don't help. Running the REAL agent (`claude -p` WITH file tools, multi-turn) in a
+throwaway git worktree of a REAL repo (deeplake-api), skill-loaded vs not, scored by an objective verifier
+(outcome-causal practices: no-mock / flush / api-verify / fresh-id):
+
+- `real-rollout.ts`: **WITH skill 4.00/4 vs no-skill 3.00/4 (+1.00, N=2)**. The same posthog skill read ~0
+  in one-shot grading → multi-turn real rollouts surface value one-shot is blind to.
+- Safe: file-tools-only (no Bash/web) + disposable worktree → no shell, no risk to the real checkout.
+
+This reopens the optimization loop with REAL rollouts as the evaluation substrate. Path to actually proving
+"an edit helps" / "a skill gets better": scale tasks (bigger N) + v1-vs-v2 rollouts + (for true pass/fail)
+run the agent's tests in a container. Caveats: small N; verifier rewards the skill's prescribed practices
+(which are outcome-causal); imitated usage, not real users.
+
+_Approx spend across the spike: ~$90 in LLM calls. Data/outputs are gitignored (contain real session content)._
