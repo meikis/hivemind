@@ -53,6 +53,11 @@
             "type": "command",
             "command": "node \"$CODEX_PLUGIN_ROOT/bundle/stop.js\"",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "node \"$CODEX_PLUGIN_ROOT/bundle/graph-on-stop.js\"",
+            "timeout": 30
           }
         ]
       }

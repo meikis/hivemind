@@ -84,6 +84,8 @@ const codexHooks = [
   { entry: "dist/src/hooks/codex/wiki-worker.js", out: "wiki-worker" },
   { entry: "dist/src/skillify/skillify-worker.js", out: "skillify-worker" },
   { entry: "dist/src/hooks/graph-pull-worker.js", out: "graph-pull-worker" },
+  // G3: code-graph auto-build parity for Codex (same shared hook as CC/Cursor).
+  { entry: "dist/src/hooks/graph-on-stop.js", out: "graph-on-stop" },
 ];
 
 const codexShell = [
@@ -114,6 +116,9 @@ await build({
     "onnxruntime-node",
     "onnxruntime-common",
     "sharp",
+    // graph-on-stop transitively imports the tree-sitter native parser (G3).
+    "tree-sitter",
+    "tree-sitter-typescript",
   ],
   define: {
     __HIVEMIND_VERSION__: JSON.stringify(hivemindVersion),
@@ -150,6 +155,8 @@ const hermesHooks = [
   { entry: "dist/src/hooks/hermes/wiki-worker.js", out: "wiki-worker" },
   { entry: "dist/src/skillify/skillify-worker.js", out: "skillify-worker" },
   { entry: "dist/src/hooks/graph-pull-worker.js", out: "graph-pull-worker" },
+  // G3: code-graph auto-build parity for Hermes (registered on on_session_end).
+  { entry: "dist/src/hooks/graph-on-stop.js", out: "graph-on-stop" },
 ];
 
 const cursorShell = [
@@ -224,6 +231,9 @@ await build({
     "onnxruntime-node",
     "onnxruntime-common",
     "sharp",
+    // graph-on-stop transitively imports the tree-sitter native parser (G3).
+    "tree-sitter",
+    "tree-sitter-typescript",
   ],
   define: {
     __HIVEMIND_VERSION__: JSON.stringify(hivemindVersion),

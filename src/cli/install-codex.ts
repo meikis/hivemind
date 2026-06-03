@@ -29,8 +29,22 @@ function buildHooksJson(): Record<string, unknown> {
       UserPromptSubmit: [hookCmd("capture.js", 10)],
       PreToolUse: [hookCmd("pre-tool-use.js", 10, "Bash")],
       PostToolUse: [hookCmd("capture.js", 15)],
-      Stop: [hookCmd("stop.js", 30)],
+      // One Stop matcher-block with TWO commands — stop.js (capture) +
+      // graph-on-stop.js (code-graph auto-build, G3). Single block (not two)
+      // mirrors the static codex/hooks/hooks.json and keeps one entry per
+      // event for the merge/dedupe logic.
+      Stop: [stopBlockWithGraph(30)],
     },
+  };
+}
+
+/** Stop block carrying both the capture stop hook and the graph auto-build. */
+function stopBlockWithGraph(timeout: number): Record<string, unknown> {
+  return {
+    hooks: [
+      { type: "command", command: `node "${join(PLUGIN_DIR, "bundle", "stop.js")}"`, timeout },
+      { type: "command", command: `node "${join(PLUGIN_DIR, "bundle", "graph-on-stop.js")}"`, timeout },
+    ],
   };
 }
 
@@ -44,6 +58,7 @@ const HIVEMIND_BUNDLE_FILES = [
   "capture.js",
   "pre-tool-use.js",
   "stop.js",
+  "graph-on-stop.js",
   "wiki-worker.js",
 ] as const;
 

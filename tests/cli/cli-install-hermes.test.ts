@@ -94,9 +94,13 @@ describe("installHermes — cold install", () => {
       "pre_tool_call",
     ]);
     for (const event of Object.keys(cfg.hooks)) {
-      expect(cfg.hooks[event]).toHaveLength(1);
+      // on_session_end carries TWO hooks: session-end capture + graph-on-stop
+      // (G3 code-graph auto-build parity). Every other event has exactly one.
+      expect(cfg.hooks[event]).toHaveLength(event === "on_session_end" ? 2 : 1);
     }
     expect(cfg.hooks.pre_tool_call[0].matcher).toBe("terminal");
+    // graph-on-stop is the second on_session_end hook (G3).
+    expect(cfg.hooks.on_session_end.some((h: { command: string }) => h.command.includes("graph-on-stop.js"))).toBe(true);
   });
 
   it("preserves a user-defined hook on a non-hivemind event", async () => {
@@ -127,7 +131,7 @@ describe("installHermes — cold install", () => {
     for (let i = 0; i < 4; i++) installHermes();
     const cfg = readConfig();
     for (const event of Object.keys(cfg.hooks)) {
-      expect(cfg.hooks[event]).toHaveLength(1);
+      expect(cfg.hooks[event]).toHaveLength(event === "on_session_end" ? 2 : 1);
     }
   });
 

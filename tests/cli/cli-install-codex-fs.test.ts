@@ -98,6 +98,10 @@ describe("installCodex — happy path", () => {
     // PreToolUse carries the Bash matcher.
     expect(hooks.hooks.PreToolUse[0].matcher).toBe("Bash");
     expect(hooks.hooks.PreToolUse[0].hooks[0].timeout).toBe(10);
+    // G3: the single Stop block carries BOTH stop.js and graph-on-stop.js.
+    const stopCmds = hooks.hooks.Stop[0].hooks.map((h: { command: string }) => h.command);
+    expect(stopCmds.some((c: string) => c.includes("stop.js"))).toBe(true);
+    expect(stopCmds.some((c: string) => c.includes("graph-on-stop.js"))).toBe(true);
   });
 
   it("is idempotent: a second install does NOT rewrite hooks.json (avoids Codex re-trust prompt)", async () => {

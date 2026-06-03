@@ -125,7 +125,10 @@ function buildHooksBlock(): Record<string, HermesHookEntry[]> {
     pre_llm_call: [buildHookEntry("capture.js", 10)],
     post_tool_call: [buildHookEntry("capture.js", 15)],
     post_llm_call: [buildHookEntry("capture.js", 15)],
-    on_session_end: [buildHookEntry("session-end.js", 30)],
+    // graph-on-stop: code-graph auto-build parity (G3), same gated hook as the
+    // other agents. on_session_end is Hermes's session-close event (analogous
+    // to Claude Code's SessionEnd).
+    on_session_end: [buildHookEntry("session-end.js", 30), buildHookEntry("graph-on-stop.js", 30)],
   };
 }
 
