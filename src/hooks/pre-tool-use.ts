@@ -166,6 +166,28 @@ export function buildAllowDecision(command: string, description: string): Claude
   return { command, description };
 }
 
+/**
+ * Build a shell command that emits `body` VERBATIM. We previously echoed the
+ * JSON-stringified body, but JSON.stringify only escapes `"` and `\` —
+ * NOT backticks or `$`. Inside a double-quoted echo the shell still performs
+ * command substitution (`` `find/` `` → runs `find/`) and variable expansion,
+ * which corrupted bodies containing backticks/$ (e.g. the graph index.md help
+ * text, or a memory summary with code) and leaked `find/: No such file` to
+ * stderr. JSON.stringify also turned real newlines into the 2-char `\n`, which
+ * bash's `echo` prints literally.
+ *
+ * Fix: single-quote the body so the shell treats it fully literally — no
+ * substitution, no expansion, real newlines preserved. The only character that
+ * needs escaping inside single quotes is `'` itself, encoded as `'\''` (close
+ * quote, an escaped literal quote, reopen quote). `printf '%s\n'` prints the
+ * single argument exactly (a `%` in the body is harmless — it's the argument,
+ * not the format).
+ */
+export function safeEchoCommand(body: string): string {
+  const escaped = body.replace(/'/g, `'\\''`);
+  return `printf '%s\\n' '${escaped}'`;
+}
+
 export function extractGrepParams(
   toolName: string,
   toolInput: Record<string, unknown>,
@@ -284,7 +306,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
 
     logFn(`unsupported command, returning guidance: ${cmd}`);
     return buildAllowDecision(
-      `echo ${JSON.stringify(guidance)}`,
+      safeEchoCommand(guidance),
       "[DeepLake] unsupported command — rewrite using bash builtins",
     );
   }
@@ -332,7 +354,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
         readVirtualPathContentsFn: async (_api, _memoryTable, _sessionsTable, cachePaths) => readVirtualPathContentsWithCache(cachePaths),
       });
       if (compiled !== null) {
-        return buildAllowDecision(`echo ${JSON.stringify(compiled)}`, `[DeepLake compiled] ${shellCmd}`);
+        return buildAllowDecision(safeEchoCommand(compiled), `[DeepLake compiled] ${shellCmd}`);
       }
     }
 
@@ -340,7 +362,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
     if (grepParams) {
       logFn(`direct grep: pattern=${grepParams.pattern} path=${grepParams.targetPath}`);
       const result = await handleGrepDirectFn(api, table, sessionsTable, grepParams);
-      if (result !== null) return buildAllowDecision(`echo ${JSON.stringify(result)}`, `[DeepLake direct] grep ${grepParams.pattern}`);
+      if (result !== null) return buildAllowDecision(safeEchoCommand(result), `[DeepLake direct] grep ${grepParams.pattern}`);
     }
 
     let virtualPath: string | null = null;
@@ -410,7 +432,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
         const file_path = writeReadCacheFileFn(input.session_id, virtualPath, body);
         return buildReadDecision(file_path, `[hivemind graph] ${virtualPath}`);
       }
-      return buildAllowDecision(`echo ${JSON.stringify(body)}`, `[hivemind graph] /graph/${subpath}`);
+      return buildAllowDecision(safeEchoCommand(body), `[hivemind graph] /graph/${subpath}`);
     }
     if (lsDir === "/graph" || lsDir === "/graph/") {
       const body = "index.md\nfind/\nshow/\n";
@@ -418,7 +440,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
         const file_path = writeReadCacheFileFn(input.session_id, "/graph", body);
         return buildReadDecision(file_path, "[hivemind graph] ls /graph");
       }
-      return buildAllowDecision(`echo ${JSON.stringify(body)}`, `[hivemind graph] ls /graph`);
+      return buildAllowDecision(safeEchoCommand(body), `[hivemind graph] ls /graph`);
     }
 
     if (virtualPath && !virtualPath.endsWith("/")) {
@@ -438,7 +460,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
         if (virtualPath === "/index.md") {
           writeCachedIndexContentFn(input.session_id, content);
         }
-        if (lineLimit === -1) return buildAllowDecision(`echo ${JSON.stringify(`${content.split("\n").length} ${virtualPath}`)}`, `[DeepLake direct] wc -l ${virtualPath}`);
+        if (lineLimit === -1) return buildAllowDecision(safeEchoCommand(`${content.split("\n").length} ${virtualPath}`), `[DeepLake direct] wc -l ${virtualPath}`);
         if (lineLimit > 0) {
           const lines = content.split("\n");
           content = fromEnd ? lines.slice(-lineLimit).join("\n") : lines.slice(0, lineLimit).join("\n");
@@ -452,7 +474,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
           return buildReadDecision(file_path, `[DeepLake direct] ${label} ${virtualPath}`);
         }
         const capped = capOutputForClaude(content, { kind: label });
-        return buildAllowDecision(`echo ${JSON.stringify(capped)}`, `[DeepLake direct] ${label} ${virtualPath}`);
+        return buildAllowDecision(safeEchoCommand(capped), `[DeepLake direct] ${label} ${virtualPath}`);
       }
     }
 
@@ -497,7 +519,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
         }
       }
       const lsOutput = capOutputForClaude(lines.join("\n") || "(empty directory)", { kind: "ls" });
-      return buildAllowDecision(`echo ${JSON.stringify(lsOutput)}`, `[DeepLake direct] ls ${dir}`);
+      return buildAllowDecision(safeEchoCommand(lsOutput), `[DeepLake direct] ls ${dir}`);
     }
 
     if (input.tool_name === "Bash") {
@@ -510,7 +532,7 @@ export async function processPreToolUse(input: PreToolUseInput, deps: ClaudePreT
         let result = paths.join("\n") || "";
         if (/\|\s*wc\s+-l\s*$/.test(shellCmd)) result = String(paths.length);
         const capped = capOutputForClaude(result || "(no matches)", { kind: "find" });
-        return buildAllowDecision(`echo ${JSON.stringify(capped)}`, `[DeepLake direct] find ${dir}`);
+        return buildAllowDecision(safeEchoCommand(capped), `[DeepLake direct] find ${dir}`);
       }
     }
   } catch (e: any) {

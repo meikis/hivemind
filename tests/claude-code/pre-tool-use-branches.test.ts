@@ -437,7 +437,7 @@ describe("processPreToolUse: Bash read-shape intercepts", () => {
         executeCompiledBashCommandFn: vi.fn(async () => null) as any,
       },
     );
-    expect(d?.command).toContain("l1\\nl2");
+    expect(d?.command).toContain("l1\nl2");
     expect(d?.command).not.toContain("l3");
   });
 
@@ -452,7 +452,7 @@ describe("processPreToolUse: Bash read-shape intercepts", () => {
         executeCompiledBashCommandFn: vi.fn(async () => null) as any,
       },
     );
-    expect(d?.command).toContain("l3\\nl4");
+    expect(d?.command).toContain("l3\nl4");
     expect(d?.command).not.toContain("l1");
   });
 
@@ -503,7 +503,7 @@ describe("processPreToolUse: find / grep / fallback", () => {
         executeCompiledBashCommandFn: vi.fn(async () => null) as any,
       },
     );
-    expect(d?.command).toContain('"3"');
+    expect(d?.command).toContain("'3'");
   });
 
   it("Grep tool: falls through to handleGrepDirect and returns the matches", async () => {
