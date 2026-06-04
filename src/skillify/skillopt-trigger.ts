@@ -67,6 +67,7 @@ export interface FireResult {
  */
 export function maybeFireSkillOpt(deps: FireDeps = {}): FireResult {
   const env = deps.env ?? process.env;
+  // Default ON. Fires weekly for everyone; opt-out via HIVEMIND_SKILLOPT_DISABLED=1.
   if (env.HIVEMIND_SKILLOPT_DISABLED === "1") return { fired: false, reason: "disabled" };
   if (env.HIVEMIND_SKILLOPT_WORKER === "1") return { fired: false, reason: "in-worker" }; // recursion guard
   const now = deps.now ?? Date.now();

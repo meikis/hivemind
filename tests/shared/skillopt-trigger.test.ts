@@ -29,7 +29,7 @@ describe("maybeFireSkillOpt (auto-fire decision)", () => {
       now: NOW,
       save: (s) => saved.push(s),
       spawnWorker: spawn,
-      env: {} as NodeJS.ProcessEnv,
+      env: {} as NodeJS.ProcessEnv, // default ON
       ...over,
     });
     return { res, saved, spawn };
