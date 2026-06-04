@@ -367,6 +367,11 @@ export default defineConfig({
         "src/notifications/rules/registry.ts":    { statements: 90, branches: 90, functions: 90, lines: 90 },
         "src/notifications/rules/welcome.ts":     { statements: 90, branches: 90, functions: 90, lines: 90 },
         "src/notifications/sources/backend.ts":   { statements: 90, branches: 90, functions: 80, lines: 90 },
+        // feat/resume-next-steps — resume-brief windowing (skip placeholders +
+        // dedup) and the goal capture/get CLI. pickResumeBrief is exercised via
+        // a mocked DeeplakeApi boundary (see resume-brief.test.ts).
+        "src/notifications/sources/resume-brief.ts": { statements: 90, branches: 90, functions: 90, lines: 90 },
+        "src/commands/goal.ts":                   { statements: 90, branches: 90, functions: 90, lines: 90 },
         "src/notifications/delivery/index.ts":    { statements: 90, branches: 90, functions: 90, lines: 90 },
         "src/notifications/delivery/claude-code.ts": { statements: 90, branches: 90, functions: 90, lines: 90 },
         // feat/hivemind-savings-recap — per-session "Hivemind has saved you Nk tokens"
@@ -457,6 +462,15 @@ export default defineConfig({
         "src/hooks/graph-on-stop.ts":        { statements: 85, branches: 70, functions: 85, lines: 85 },
         "src/commands/graph.ts":             { statements: 65, branches: 55, functions: 90, lines: 65 },
         "src/utils/repo-identity.ts":        { statements: 85, branches: 50, functions: 90, lines: 90 },
+        // fix/goals-vfs-skew — the Deeplake VFS (goal/kpi routing, graph
+        // bridge, session reads, soft-close/status-transition). Previously
+        // unenforced: the file sat at ~82% lines / ~72% branches and only
+        // surfaced as a red PR-coverage comment. deeplake-fs-coverage.test.ts
+        // exercises the structured-table dispatch, the /graph/* bridge, the
+        // session concat path, and the rm/mv goal flows against a stateful
+        // mock DeeplakeApi, bringing it to 97/91/97/99. Floor set at 90 to
+        // catch regressions on these paths going forward.
+        "src/shell/deeplake-fs.ts":          { statements: 90, branches: 90, functions: 90, lines: 90 },
       },
     },
   },

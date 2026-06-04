@@ -43,6 +43,40 @@ type QueryFn = (sql: string) => Promise<Array<Record<string, unknown>>>;
 
 const VALID_STATUS = new Set(["opened", "in_progress", "closed"]);
 
+// Provenance values allowed in the `agent` column when adding a goal.
+// `capture` marks a task the user parked mid-session ("save this for
+// later") so it can be told apart from hand-created goals. Allowlisted
+// because the value is interpolated into the INSERT literal.
+const VALID_AGENT = new Set(["manual", "capture"]);
+
+/**
+ * Pull an optional `--agent <name>` out of the `goal add` args, leaving
+ * the rest as the goal text. The flag may appear anywhere; the value is
+ * validated against VALID_AGENT. Defaults to "manual".
+ */
+function parseAgentFlag(args: string[]): { agent: string; rest: string[] } {
+  const rest: string[] = [];
+  let agent = "manual";
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--agent") {
+      const val = args[i + 1];
+      if (!val) {
+        process.stderr.write("usage: --agent requires a value (manual|capture)\n");
+        process.exit(1);
+      }
+      agent = val;
+      i++; // consume the value
+      continue;
+    }
+    rest.push(args[i]);
+  }
+  if (!VALID_AGENT.has(agent)) {
+    process.stderr.write(`invalid --agent: ${agent} (expected manual|capture)\n`);
+    process.exit(1);
+  }
+  return { agent, rest };
+}
+
 function loadApiOrDie(table: string): { api: DeeplakeApi; query: QueryFn; userName: string } {
   const cfg = loadConfig();
   if (!cfg) {
@@ -62,7 +96,7 @@ function loadApiOrDie(table: string): { api: DeeplakeApi; query: QueryFn; userNa
 
 // ── goal subcommands ────────────────────────────────────────────────────────
 
-async function goalAdd(text: string): Promise<void> {
+async function goalAdd(text: string, agent: string = "manual"): Promise<void> {
   const cfg = loadConfig();
   if (!cfg) {
     process.stderr.write("hivemind: not logged in.\n");
@@ -75,7 +109,7 @@ async function goalAdd(text: string): Promise<void> {
   const goalId = randomUUID();
   const ts = new Date().toISOString();
   await query(
-    `INSERT INTO "${safe}" (id, goal_id, owner, status, content, version, created_at, agent, plugin_version) VALUES (` +
+    `INSERT INTO "${safe}" (id, goal_id, owner, status, content, version, created_at, updated_at, agent, plugin_version) VALUES (` +
     `'${randomUUID()}', ` +
     `'${sqlStr(goalId)}', ` +
     `'${sqlStr(cfg.userName)}', ` +
@@ -83,7 +117,8 @@ async function goalAdd(text: string): Promise<void> {
     `E'${sqlStr(text)}', ` +
     `1, ` +
     `'${sqlStr(ts)}', ` +
-    `'manual', ` +
+    `'${sqlStr(ts)}', ` +
+    `'${sqlStr(agent)}', ` +
     `''` +
     `)`
   );
@@ -115,6 +150,30 @@ async function goalList(filter: "all" | "mine"): Promise<void> {
   }
 }
 
+async function goalGet(goalId: string): Promise<void> {
+  if (!goalId) { process.stderr.write("usage: hivemind goal get <goal_id>\n"); process.exit(1); }
+  const cfg = loadConfig();
+  if (!cfg) { process.stderr.write("not logged in\n"); process.exit(1); }
+  const { query } = loadApiOrDie(cfg.goalsTableName);
+  const safe = sqlIdent(cfg.goalsTableName);
+  try {
+    // Latest version wins (the VFS write path appends a fresh row per
+    // overwrite; the CLI updates in place). Print the FULL content — this
+    // is the resumable context package a future session reads back.
+    const rows = await query(
+      `SELECT content FROM "${safe}" WHERE goal_id = '${sqlStr(goalId)}' ORDER BY version DESC, created_at DESC LIMIT 1`
+    );
+    if (rows.length === 0) {
+      process.stderr.write(`goal not found: ${goalId}\n`);
+      process.exit(1);
+    }
+    process.stdout.write(`${String(rows[0].content ?? "")}\n`);
+  } catch (e: unknown) {
+    process.stderr.write(`hivemind goal get: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+}
+
 async function goalDone(goalId: string): Promise<void> {
   await goalProgress(goalId, "closed");
 }
@@ -126,11 +185,15 @@ async function goalProgress(goalId: string, status: string): Promise<void> {
   }
   const cfg = loadConfig();
   if (!cfg) { process.stderr.write("not logged in\n"); process.exit(1); }
-  const { query } = loadApiOrDie(cfg.goalsTableName);
+  const { api, query } = loadApiOrDie(cfg.goalsTableName);
+  // Heal the schema before the UPDATE: an upgraded workspace's preexisting
+  // table may lack the `updated_at` column, and this path (unlike `goal add`)
+  // is the only thing that runs before the write.
+  await api.ensureGoalsTable(cfg.goalsTableName);
   const safe = sqlIdent(cfg.goalsTableName);
   const ts = new Date().toISOString();
   await query(
-    `UPDATE "${safe}" SET status = '${sqlStr(status)}', created_at = '${sqlStr(ts)}' WHERE goal_id = '${sqlStr(goalId)}'`
+    `UPDATE "${safe}" SET status = '${sqlStr(status)}', updated_at = '${sqlStr(ts)}' WHERE goal_id = '${sqlStr(goalId)}'`
   );
   process.stdout.write(`${goalId} -> ${status}\n`);
 }
@@ -157,12 +220,13 @@ async function kpiAdd(args: string[]): Promise<void> {
   const content = `${name}\n\n- target: ${target}\n- current: 0\n- unit: ${unit}`;
   const ts = new Date().toISOString();
   await query(
-    `INSERT INTO "${safe}" (id, goal_id, kpi_id, content, version, created_at, agent, plugin_version) VALUES (` +
+    `INSERT INTO "${safe}" (id, goal_id, kpi_id, content, version, created_at, updated_at, agent, plugin_version) VALUES (` +
     `'${randomUUID()}', ` +
     `'${sqlStr(goalId)}', ` +
     `'${sqlStr(kpiId)}', ` +
     `E'${sqlStr(content)}', ` +
     `1, ` +
+    `'${sqlStr(ts)}', ` +
     `'${sqlStr(ts)}', ` +
     `'manual', ` +
     `''` +
@@ -204,7 +268,10 @@ async function kpiBump(goalId: string, kpiId: string, deltaStr: string): Promise
   }
   const cfg = loadConfig();
   if (!cfg) { process.stderr.write("not logged in\n"); process.exit(1); }
-  const { query } = loadApiOrDie(cfg.kpisTableName);
+  const { api, query } = loadApiOrDie(cfg.kpisTableName);
+  // Heal the schema before the UPDATE — same reason as goalProgress: a
+  // preexisting KPIs table may not yet have the `updated_at` column.
+  await api.ensureKpisTable(cfg.kpisTableName);
   const safe = sqlIdent(cfg.kpisTableName);
   // Read current content
   const rows = await query(
@@ -226,7 +293,7 @@ async function kpiBump(goalId: string, kpiId: string, deltaStr: string): Promise
   }
   const ts = new Date().toISOString();
   await query(
-    `UPDATE "${safe}" SET content = E'${sqlStr(newContent)}', created_at = '${sqlStr(ts)}' WHERE goal_id = '${sqlStr(goalId)}' AND kpi_id = '${sqlStr(kpiId)}'`
+    `UPDATE "${safe}" SET content = E'${sqlStr(newContent)}', updated_at = '${sqlStr(ts)}' WHERE goal_id = '${sqlStr(goalId)}' AND kpi_id = '${sqlStr(kpiId)}'`
   );
   process.stdout.write(`${goalId}/${kpiId} +${delta}\n`);
 }
@@ -237,8 +304,10 @@ const USAGE_GOAL = `
 hivemind goal — manage team goals
 
 Usage:
-  hivemind goal add "<text>"            create a goal (status=opened)
+  hivemind goal add "<text>" [--agent manual|capture]
+                                        create a goal (status=opened)
   hivemind goal list [--all|--mine]     list goals (default: --mine)
+  hivemind goal get <goal_id>           print a goal's full body (resume context)
   hivemind goal done <goal_id>          mark goal closed
   hivemind goal progress <goal_id> <opened|in_progress|closed>
 `.trim();
@@ -247,14 +316,21 @@ export async function runGoalCommand(args: string[]): Promise<void> {
   const sub = args[0];
   if (!sub || sub === "--help" || sub === "-h") { process.stdout.write(USAGE_GOAL + "\n"); return; }
   if (sub === "add") {
-    const text = args.slice(1).join(" ").trim();
+    const { agent, rest } = parseAgentFlag(args.slice(1));
+    const text = rest.join(" ").trim();
     if (!text) { process.stderr.write("usage: hivemind goal add \"<text>\"\n"); process.exit(1); }
-    await goalAdd(text);
+    await goalAdd(text, agent);
     return;
   }
   if (sub === "list") {
     const filter = args.includes("--all") ? "all" : "mine";
     await goalList(filter);
+    return;
+  }
+  if (sub === "get") {
+    const id = args[1];
+    if (!id) { process.stderr.write("usage: hivemind goal get <goal_id>\n"); process.exit(1); }
+    await goalGet(id);
     return;
   }
   if (sub === "done") {

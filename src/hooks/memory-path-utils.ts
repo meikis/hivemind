@@ -36,11 +36,37 @@ export const SAFE_BUILTINS = new Set([
   // the guidance/deny path — they never reach a real shell.
 ]);
 
+// A quoted heredoc (`<<'EOF'` / `<<"EOF"`) disables shell expansion, so its
+// body is inert literal data — a goal/KPI description, not commands. Drop the
+// body and its closing delimiter so they are never validated as command stages
+// or tripped over by the substitution guard. Unquoted heredocs keep their body
+// (bash would expand it), so they still fall through to full validation.
+function stripHeredocBodies(cmd: string): string {
+  if (!cmd.includes("<<")) return cmd;
+  const lines = cmd.split("\n");
+  const kept: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    kept.push(line);
+    const heredoc = line.match(/<<-?\s*(['"])([A-Za-z_]\w*)\1/);
+    if (!heredoc) continue;
+    const delimiter = heredoc[2];
+    const stripTabs = line.includes("<<-");
+    while (i + 1 < lines.length) {
+      const body = lines[++i];
+      const probe = stripTabs ? body.replace(/^\t+/, "") : body;
+      if (probe === delimiter) break;
+    }
+  }
+  return kept.join("\n");
+}
+
 export function isSafe(cmd: string): boolean {
+  const validated = stripHeredocBodies(cmd);
   // $'...' is ANSI-C quoting: bash expands escape sequences inside it before
   // the child process sees them, bypassing the single-quote stripping below.
-  if (/\$\(|`|<\(|\$'/.test(cmd)) return false;
-  const stripped = cmd.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
+  if (/\$\(|`|<\(|\$'/.test(validated)) return false;
+  const stripped = validated.replace(/'[^']*'/g, "''").replace(/"[^"]*"/g, '""');
   // `find … -exec/-execdir/-ok/-okdir <cmd>` runs an arbitrary program per
   // match. `find` itself must stay allowlisted for the `-name` read shape, so
   // reject the command-dispatching primaries explicitly. Checked post-strip so
