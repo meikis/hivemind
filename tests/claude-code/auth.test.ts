@@ -353,24 +353,90 @@ describe("healDriftedOrgToken", () => {
     expect(saveCredentialsMock).not.toHaveBeenCalled();
   });
 
-  it("re-mints and persists when JWT org_id differs from creds.orgId", async () => {
+  it("re-mints, realigns orgName, and persists when JWT org_id differs from creds.orgId", async () => {
     const stale = fakeJwt({ user_id: "u", org_id: "stale-org", type: "api_token" });
-    fetchMock.mockResolvedValueOnce(ok({ token: { token: "fresh-tok" } }));
+    // 1: token re-mint. 2: listOrgs (orgName realign). Default workspace → no
+    // listWorkspaces call, so exactly two fetches.
+    fetchMock
+      .mockResolvedValueOnce(ok({ token: { token: "fresh-tok" } }))
+      .mockResolvedValueOnce(ok([{ id: "target-org", name: "target-name" }, { id: "stale-org", name: "stale-name" }]));
     const { healDriftedOrgToken } = await importAuth();
     const out = await healDriftedOrgToken(
-      { token: stale, orgId: "target-org", apiUrl: "https://api.example", savedAt: "x" } as any,
+      { token: stale, orgId: "target-org", orgName: "stale-name", apiUrl: "https://api.example", savedAt: "x" } as any,
     );
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://api.example/users/me/tokens");
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe(`Bearer ${stale}`);
     expect(JSON.parse(init.body).organization_id).toBe("target-org");
+    // listOrgs runs with the freshly-minted token, not the stale one.
+    const [orgsUrl, orgsInit] = fetchMock.mock.calls[1];
+    expect(orgsUrl).toBe("https://api.example/organizations");
+    expect(orgsInit.headers.Authorization).toBe("Bearer fresh-tok");
 
     expect(saveCredentialsMock).toHaveBeenCalledTimes(1);
-    expect(saveCredentialsMock.mock.calls[0][0].token).toBe("fresh-tok");
+    const written = saveCredentialsMock.mock.calls[0][0];
+    expect(written.token).toBe("fresh-tok");
+    expect(written.orgName).toBe("target-name"); // realigned away from "stale-name"
     expect(out.token).toBe("fresh-tok");
+    expect(out.orgName).toBe("target-name");
+  });
+
+  it("resets a stale concrete workspace that is absent from the new org", async () => {
+    const stale = fakeJwt({ user_id: "u", org_id: "stale-org", type: "api_token" });
+    fetchMock
+      .mockResolvedValueOnce(ok({ token: { token: "fresh-tok" } }))
+      .mockResolvedValueOnce(ok([{ id: "target-org", name: "target-name" }]))
+      .mockResolvedValueOnce(ok({ data: [{ id: "ws-of-target", name: "prod" }] }));
+    const { healDriftedOrgToken } = await importAuth();
+    const out = await healDriftedOrgToken(
+      { token: stale, orgId: "target-org", orgName: "target-name", workspaceId: "ws-of-old-org", apiUrl: "https://api.example", savedAt: "x" } as any,
+    );
+
+    // mint + listOrgs + listWorkspaces = three fetches (non-default workspace).
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock.mock.calls[2][0]).toBe("https://api.example/workspaces");
+    expect(saveCredentialsMock).toHaveBeenCalledTimes(1);
+    expect(out.workspaceId).toBe("default"); // old-org workspace dropped
+  });
+
+  it("normalizes a stale workspace NAME to its canonical id in the new org", async () => {
+    const stale = fakeJwt({ user_id: "u", org_id: "stale-org", type: "api_token" });
+    fetchMock
+      .mockResolvedValueOnce(ok({ token: { token: "fresh-tok" } }))
+      .mockResolvedValueOnce(ok([{ id: "target-org", name: "target-name" }]))
+      .mockResolvedValueOnce(ok({ data: [{ id: "ws-of-target", name: "prod" }] }));
+    const { healDriftedOrgToken } = await importAuth();
+    const out = await healDriftedOrgToken(
+      { token: stale, orgId: "target-org", orgName: "target-name", workspaceId: "prod", apiUrl: "https://api.example", savedAt: "x" } as any,
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(saveCredentialsMock).toHaveBeenCalledTimes(1);
+    // The name "prod" exists in the target org → resolved to its canonical id.
+    expect(saveCredentialsMock.mock.calls[0][0].workspaceId).toBe("ws-of-target");
+    expect(out.workspaceId).toBe("ws-of-target");
+  });
+
+  it("persists the token heal even when the orgName realign fails (best-effort)", async () => {
+    const stale = fakeJwt({ user_id: "u", org_id: "stale-org", type: "api_token" });
+    fetchMock
+      .mockResolvedValueOnce(ok({ token: { token: "fresh-tok" } }))
+      .mockResolvedValueOnce(new Response("boom", { status: 500 }));
+    const logged: string[] = [];
+    const { healDriftedOrgToken } = await importAuth();
+    const out = await healDriftedOrgToken(
+      { token: stale, orgId: "target-org", orgName: "stale-name", apiUrl: "https://api.example", savedAt: "x" } as any,
+      (m) => logged.push(m),
+    );
+
+    // The token heal still lands; only the realign was skipped.
+    expect(saveCredentialsMock).toHaveBeenCalledTimes(1);
+    expect(out.token).toBe("fresh-tok");
+    expect(out.orgName).toBe("stale-name"); // unchanged — realign couldn't run
+    expect(logged.some(m => /realign skipped/.test(m))).toBe(true);
   });
 
   it("returns the original creds and does NOT persist when the mint call fails", async () => {
