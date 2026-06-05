@@ -61,6 +61,13 @@ describe("resolvePythonModule", () => {
     const ambig = new Set(["a/dto/common.py", "b/dto/common.py"]);
     expect(resolvePythonModule("a/x.py", "dto.common", ambig)).toBeNull();
   });
+
+  it("DROPS an over-climbing relative import instead of matching at repo root", () => {
+    // `....foo` from pkg/sub/mod.py climbs more levels than exist above it →
+    // invalid Python. Must NOT spuriously resolve to a root-level `foo.py`.
+    const known = new Set(["pkg/sub/mod.py", "foo.py"]);
+    expect(resolvePythonModule("pkg/sub/mod.py", "....foo", known)).toBeNull();
+  });
 });
 
 describe("resolveCrossFileCalls — Python", () => {

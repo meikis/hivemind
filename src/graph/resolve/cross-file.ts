@@ -330,7 +330,12 @@ export function resolvePythonModule(
 
   // Relative: start at the importer's package dir, climb (dots - 1) levels.
   let dir = posix.dirname(fromFile);
-  for (let i = 1; i < dots && dir !== "" && dir !== "."; i++) dir = posix.dirname(dir);
+  let climbed = 1;
+  for (; climbed < dots && dir !== "" && dir !== "."; climbed++) dir = posix.dirname(dir);
+  // Over-climb: more leading dots than directories above the importer is an
+  // invalid relative import. Drop it rather than clamp to "." and risk a
+  // spurious match at the repo root (CodeRabbit).
+  if (climbed < dots) return null;
   const base = segs.length > 0 ? posix.normalize(posix.join(dir, ...segs)) : dir;
   for (const e of PY_EXTS) if (knownFiles.has(`${base}${e}`)) return `${base}${e}`;
   for (const e of PY_EXTS) if (knownFiles.has(`${base}/__init__${e}`)) return `${base}/__init__${e}`;
@@ -355,7 +360,9 @@ function matchPythonSuffix(suffix: string, knownFiles: Set<string>): string | nu
       if (f.endsWith(`/${t}`)) { hit = f; count++; }
     }
     if (count === 1) return hit;
-    if (count > 1) return null; // ambiguous — drop, don't guess
+    // Ambiguity on ANY target form is sufficient grounds to drop the whole
+    // resolution — don't fall through to the remaining forms (CodeRabbit).
+    if (count > 1) return null;
   }
   return null;
 }
