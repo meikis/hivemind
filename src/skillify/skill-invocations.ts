@@ -97,7 +97,7 @@ export async function listSkillInvocations(
   return out;
 }
 
-interface Turn { role: "USER" | "ASSISTANT"; text: string }
+export interface Turn { role: "USER" | "ASSISTANT"; text: string }
 
 /**
  * Reconstruct the transcript turns of a session, and mark where (between which two
@@ -139,17 +139,26 @@ async function sessionTurns(
  * turns after — where the help-or-harm signal lives — head+tail elided to maxChars.
  * `before`/`after` are tunable; defaults chosen as a small starting point.
  */
+export async function windowedTurns(
+  query: QueryFn,
+  sessionsTable: string,
+  inv: SkillInvocation,
+  opts: { before?: number; after?: number } = {},
+): Promise<Turn[]> {
+  const before = opts.before ?? 3;
+  const after = opts.after ?? 6;
+  const { turns, invIndex } = await sessionTurns(query, sessionsTable, inv);
+  return turns.slice(Math.max(0, invIndex - before), invIndex + after);
+}
+
 export async function windowAroundInvocation(
   query: QueryFn,
   sessionsTable: string,
   inv: SkillInvocation,
   opts: { before?: number; after?: number; maxChars?: number } = {},
 ): Promise<string> {
-  const before = opts.before ?? 3;
-  const after = opts.after ?? 6;
   const maxChars = opts.maxChars ?? 4000;
-  const { turns, invIndex } = await sessionTurns(query, sessionsTable, inv);
-  const slice = turns.slice(Math.max(0, invIndex - before), invIndex + after);
+  const slice = await windowedTurns(query, sessionsTable, inv, opts);
   const joined = slice.map((t) => `${t.role}: ${t.text}`).join("\n\n");
   if (joined.length <= maxChars) return joined;
   const head = joined.slice(0, Math.floor(maxChars * 0.55));
