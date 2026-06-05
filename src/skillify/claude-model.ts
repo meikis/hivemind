@@ -5,6 +5,7 @@
  * unit-testable with zero real calls.
  */
 import { spawn } from "node:child_process";
+import { findAgentBin } from "./gate-runner.js";
 
 /** (systemPrompt, userPrompt) -> raw model text. */
 export type ModelCall = (systemPrompt: string, userPrompt: string) => Promise<string>;
@@ -25,7 +26,10 @@ export function claudeModel(model: string, opts: { timeoutMs?: number } = {}): M
     // hook entirely (no Deeplake-context injection into the prompt, no auto-pull/graph
     // work) — one child per anchored invocation would otherwise contaminate the judge
     // prompt and pile up background work. Same guard the other internal runners use.
-    const child = spawn("claude", args, {
+    // Resolve the claude binary the same way the rest of skillify does — a detached
+    // hook worker may not have it on PATH (e.g. ~/.claude/local/claude), and a bare
+    // "claude" would ENOENT and the callers would swallow it as no-change.
+    const child = spawn(findAgentBin("claude_code"), args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, HIVEMIND_CAPTURE: "false", HIVEMIND_WIKI_WORKER: "1" },
     });
