@@ -17,6 +17,21 @@ vi.mock("../../src/notifications/sources/resume-brief.js", () => ({
   pickResumeBrief: resumeMock,
 }));
 
+// Mock the cold-start brief so it doesn't take the prefix slot from the
+// resume brief in tests that exercise the resume path. Default: null.
+const { coldMock } = vi.hoisted(() => ({ coldMock: vi.fn() }));
+vi.mock("../../src/notifications/sources/cold-start-brief.js", () => ({
+  pickColdStartBrief: coldMock,
+}));
+
+// Mock only the network read of open goals; keep the real formatter so the
+// banner's goals block (and its spacing) is exercised end to end.
+const { goalsMock } = vi.hoisted(() => ({ goalsMock: vi.fn() }));
+vi.mock("../../src/notifications/sources/open-goals.js", async (importActual) => {
+  const actual = await importActual<typeof import("../../src/notifications/sources/open-goals.js")>();
+  return { ...actual, fetchOpenGoals: goalsMock };
+});
+
 import { pickPrimaryBanner, formatTokens } from "../../src/notifications/sources/primary-banner.js";
 import { appendUsageRecord } from "../../src/notifications/usage-tracker.js";
 import type { Credentials } from "../../src/commands/auth-creds.js";
@@ -45,10 +60,23 @@ beforeEach(() => {
   resumeMock.mockReset();
   // Default: no prior summary for this project → no resume brief.
   resumeMock.mockResolvedValue(null);
+  coldMock.mockReset();
+  // Default: not a first-run → cold-start brief stays out of the way.
+  coldMock.mockResolvedValue(null);
+  goalsMock.mockReset();
+  // Default: no open goals.
+  goalsMock.mockResolvedValue(null);
+  // loadConfig() (used by the goals lookup) needs a token + org to return a
+  // config; supply them via env so fetchOpenGoals is actually consulted.
+  // goalsMock defaults to null, so cases that don't set goals are unchanged.
+  process.env.HIVEMIND_TOKEN = "tok";
+  process.env.HIVEMIND_ORG_ID = "org-1";
 });
 
 afterEach(() => {
   process.env.HOME = ORIGINAL_HOME;
+  delete process.env.HIVEMIND_TOKEN;
+  delete process.env.HIVEMIND_ORG_ID;
   rmSync(TEMP_HOME, { recursive: true, force: true });
 });
 
@@ -83,6 +111,22 @@ describe("pickPrimaryBanner — welcome (default when savings ≤ 1M)", () => {
     expect(n!.title).toBe("Welcome back, ada");
     expect(n!.body).toBe("Connected to org acme (workspace ws-1).");
     expect(n!.dedupKey).toEqual({ session: "s-1" });
+  });
+
+  it("separates the resume brief and the open-goals block by exactly one blank line", async () => {
+    // The resume brief ends each session block with a trailing newline.
+    // composeBody joins sections with '\n\n'; without trimming that trailing
+    // newline the brief→goals seam rendered TWO blank lines.
+    resumeMock.mockResolvedValue({
+      brief:
+        "📌 Picking up on indra — where you left off:\n" +
+        "   • finish the thing\n" +
+        "     ↳ /resume abc · earlier today\n",
+    });
+    goalsMock.mockResolvedValue({ count: 2, sample: ["goal one", "goal two"] });
+    const n = await pickPrimaryBanner("s-blank", FRESH_CREDS, "startup");
+    expect(n!.body).not.toContain("\n\n\n");
+    expect(n!.body).toContain("↳ /resume abc · earlier today\n\n📌 2 goals open");
   });
 
   it("renders welcome when org-stats present but savings < 1k", async () => {
