@@ -19,7 +19,7 @@
  * convention but can be removed from the JSON per project.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -68,20 +68,26 @@ function defaultConfigObject(): Record<string, unknown> {
  */
 export function loadGraphIgnore(deeplakeDir: string = join(homedir(), ".deeplake")): GraphIgnoreConfig {
   const path = join(deeplakeDir, FILE_NAME);
+  // Read an existing config directly. Reading and reacting to the result (rather
+  // than existsSync-then-read) avoids a check-then-use (TOCTOU) race.
   try {
-    if (existsSync(path)) {
-      const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<GraphIgnoreConfig>;
-      const ignoreDirs = Array.isArray(parsed.ignoreDirs)
-        ? parsed.ignoreDirs.filter((s): s is string => typeof s === "string")
-        : [...DEFAULT_IGNORE_DIRS];
-      const respectGitignore = typeof parsed.respectGitignore === "boolean" ? parsed.respectGitignore : true;
-      return { ignoreDirs, respectGitignore };
-    }
-    // First run — seed the defaults for the user to edit.
-    mkdirSync(deeplakeDir, { recursive: true });
-    writeFileSync(path, JSON.stringify(defaultConfigObject(), null, 2) + "\n");
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<GraphIgnoreConfig>;
+    const ignoreDirs = Array.isArray(parsed.ignoreDirs)
+      ? parsed.ignoreDirs.filter((s): s is string => typeof s === "string")
+      : [...DEFAULT_IGNORE_DIRS];
+    const respectGitignore = typeof parsed.respectGitignore === "boolean" ? parsed.respectGitignore : true;
+    return { ignoreDirs, respectGitignore };
   } catch {
-    // best-effort — fall through to in-memory defaults
+    // missing / unreadable / unparseable — seed defaults below, then return them.
+  }
+  // Seed the defaults for the user to edit. `flag: "wx"` creates the file
+  // atomically and fails if it already exists (e.g. a concurrent build just
+  // seeded it), so we never clobber an existing file — no existsSync race.
+  try {
+    mkdirSync(deeplakeDir, { recursive: true });
+    writeFileSync(path, JSON.stringify(defaultConfigObject(), null, 2) + "\n", { flag: "wx" });
+  } catch {
+    // already exists (race) or unwritable — fine, fall through to defaults.
   }
   return { ignoreDirs: [...DEFAULT_IGNORE_DIRS], respectGitignore: true };
 }
