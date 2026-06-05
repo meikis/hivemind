@@ -18,6 +18,7 @@ import { proposeSkillEdit, type ProposeConfig } from "./skill-proposer.js";
 import { splitFrontmatter } from "./skill-publisher.js";
 import type { QueryFn } from "./skill-invocations.js";
 import type { Edit } from "./skill-edits.js";
+import type { PulledManifest } from "./manifest.js";
 
 export interface ProposalRecord {
   name: string;
@@ -104,4 +105,27 @@ export function readSkillBodyFromDisk(skillsRoot: string, name: string, author: 
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve a skill's body from its ACTUAL install location via the pull manifest,
+ * trying every recorded installRoot, then a fallback root. Authoritative — handles
+ * skills pulled with `--to project` into any cwd (invocations come from all
+ * projects, so the worker can't assume its own cwd), and avoids editing a
+ * same-named skill that happens to sit in the current cwd.
+ */
+export function readSkillBodyViaManifest(
+  name: string,
+  author: string,
+  manifest: PulledManifest,
+  fallbackRoot?: string,
+): string | null {
+  const dirName = `${name}--${author}`;
+  const roots = manifest.entries.filter((e) => e.dirName === dirName).map((e) => e.installRoot);
+  if (fallbackRoot) roots.push(fallbackRoot);
+  for (const root of roots) {
+    const body = readSkillBodyFromDisk(root, name, author);
+    if (body) return body;
+  }
+  return null;
 }

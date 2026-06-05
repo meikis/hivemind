@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { runSkillOptCycle, type ProposalRecord } from "../../src/skillify/skillopt-engine.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { runSkillOptCycle, readSkillBodyViaManifest, type ProposalRecord } from "../../src/skillify/skillopt-engine.js";
+import type { PulledManifest } from "../../src/skillify/manifest.js";
 
 const invRow = (skill: string, sid: string) => ({
   message: { type: "tool_call", tool_name: "Skill", tool_input: JSON.stringify({ skill }), session_id: sid, timestamp: sid },
@@ -94,6 +98,23 @@ describe("runSkillOptCycle", () => {
     expect(written.some((w) => w.name === "bad0")).toBe(false);
     expect(recorded).not.toContain("bad0");              // not recorded again
     expect(res.proposals.find((p) => p.name === "bad0")!.changed).toBe(false);
+  });
+
+  it("reads a project-pulled skill body via the manifest's installRoot (not the cwd)", () => {
+    const projRoot = fs.mkdtempSync(path.join(os.tmpdir(), "proj-"));
+    try {
+      fs.mkdirSync(path.join(projRoot, "x--a"), { recursive: true });
+      fs.writeFileSync(path.join(projRoot, "x--a", "SKILL.md"), "---\nname: x\nauthor: a\n---\n## Body\nproject body");
+      const manifest = {
+        version: 1,
+        entries: [{ dirName: "x--a", name: "x", author: "a", installRoot: projRoot, projectKey: "", remoteVersion: 1, install: "project", installedAtVersion: 1, pulledAt: "", symlinks: [] }],
+      } as unknown as PulledManifest;
+      expect(readSkillBodyViaManifest("x", "a", manifest, "/nonexistent-global")).toBe("## Body\nproject body");
+      // no manifest entry + no fallback body → null (not a silent wrong-skill edit)
+      expect(readSkillBodyViaManifest("y", "b", manifest, "/nonexistent-global")).toBeNull();
+    } finally {
+      fs.rmSync(projRoot, { recursive: true, force: true });
+    }
   });
 
   it("honors a custom fireThreshold", async () => {

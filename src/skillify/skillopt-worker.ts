@@ -16,8 +16,9 @@ import { log as _log } from "../utils/debug.js";
 import { loadConfig } from "../config.js";
 import { DeeplakeApi } from "../deeplake-api.js";
 import { getStateDir } from "./state-dir.js";
-import { runSkillOptCycle, writeProposalToDisk, readSkillBodyFromDisk } from "./skillopt-engine.js";
+import { runSkillOptCycle, writeProposalToDisk, readSkillBodyViaManifest } from "./skillopt-engine.js";
 import { loadMeta, appendMeta, priorEditSummaries, alreadyProposed, metaEntryFor } from "./skillopt-meta.js";
+import { loadManifest } from "./manifest.js";
 
 const log = (m: string) => _log("skillopt-worker", m);
 
@@ -28,12 +29,11 @@ async function main(): Promise<void> {
 
   const api = new DeeplakeApi(config.token, config.apiUrl, config.orgId, config.workspaceId, config.tableName);
   const query = (sql: string) => api.query(sql) as Promise<Array<Record<string, unknown>>>;
-  // Read both the global root and the project-scoped root (skills pulled with
-  // `--to project` live under <cwd>/.claude/skills; the detached worker inherits
-  // the SessionStart cwd). Without the project root, a deficient project-pulled
-  // skill would be silently skipped (readSkillBody → null).
+  // Resolve skill bodies via the pull manifest's recorded installRoot (authoritative)
+  // — invocations come from ALL projects, so we can't assume the worker's own cwd.
+  // The global ~/.claude/skills is a fallback for skills not in the manifest.
+  const manifest = loadManifest();
   const skillsRoot = path.join(os.homedir(), ".claude", "skills");
-  const projectRoot = path.join(process.cwd(), ".claude", "skills");
   const proposalsRoot = path.join(getStateDir(), "skillopt", "proposals");
   const metaFile = path.join(getStateDir(), "skillopt", "meta.jsonl");
   const metaCache = loadMeta(metaFile);
@@ -42,7 +42,7 @@ async function main(): Promise<void> {
   const res = await runSkillOptCycle({
     query,
     sessionsTable: config.sessionsTableName,
-    readSkillBody: (name, author) => readSkillBodyFromDisk(skillsRoot, name, author) ?? readSkillBodyFromDisk(projectRoot, name, author),
+    readSkillBody: (name, author) => readSkillBodyViaManifest(name, author, manifest, skillsRoot),
     writeProposal: (rec) => writeProposalToDisk(proposalsRoot, rec),
     meta: {
       prior: (n, a) => priorEditSummaries(metaCache, n, a),
