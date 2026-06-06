@@ -85,6 +85,11 @@ const DISPATCH: Record<Agent, AgentDispatch> = {
     model: () => undefined,
   },
   pi: {
+    // The google/gemini default needs a Google API key. A user on another provider
+    // MUST set HIVEMIND_SKILLOPT_PI_PROVIDER + _MODEL — e.g. AWS Bedrock uses provider
+    // `amazon-bedrock` and an inference-profile model id like
+    // `us.anthropic.claude-haiku-4-5-20251001-v1:0`. With a wrong default pi exits
+    // non-zero ("No API key found") → surfaced loudly via the exit-code guard, not silent.
     buildArgs: (model, provider, system, user) => [
       "--print", "--provider", provider ?? "google", "--model", model ?? "gemini-2.5-flash", fold(system, user),
     ],
