@@ -8,7 +8,11 @@ describe("readCurrentSkillRow", () => {
       expect(sql).toContain('FROM "skills"');
       expect(sql).toContain("name = 'posthog'");
       expect(sql).toContain("author = 'kamo'");
-      expect(sql).toContain("ORDER BY version DESC");
+      // Must order by created_at (TEXT, reliable), NOT version: the BIGINT `version`
+      // column returns corrupted MAX()/ORDER-BY values in the read-after-write window
+      // (Deeplake engine bug), and skillopt reads this right before publishing v+1.
+      expect(sql).toContain("ORDER BY created_at DESC");
+      expect(sql).not.toContain("ORDER BY version"); // negative guard against regressing to the buggy pattern
       return [{
         name: "posthog", author: "kamo", project: "deeplake-api", project_key: "pk1",
         local_path: ".claude/skills", install: "global",

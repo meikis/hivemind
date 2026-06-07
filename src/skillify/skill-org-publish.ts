@@ -63,10 +63,18 @@ export async function readCurrentSkillRow(
     `source_agent, scope, contributors, description, trigger_text, body, version ` +
     `FROM "${sqlIdent(skillsTable)}" ` +
     `WHERE name = '${sqlStr(name)}' AND author = '${sqlStr(author)}' ` +
-    // version DESC, then created_at DESC as a deterministic tie-breaker — if two workers
-    // ever land the same version (cross-machine race), readers resolve the SAME row
-    // instead of an arbitrary one (codex P2).
-    `ORDER BY version DESC, created_at DESC LIMIT 1`,
+    // Order by created_at, NOT version. Deeplake's query engine returns CORRUPTED values
+    // for MAX()/ORDER BY on the BIGINT `version` column when the read lands in the
+    // write-propagation window right after an INSERT — a deterministic 12/12 in a tight
+    // insert→read loop (phantom values like 281473679796896 ≈ 2^48, present in no row).
+    // skillopt reads this immediately before publishing v+1, so `ORDER BY version DESC`
+    // could read a garbage current version and publish a garbage next version (observed
+    // v281473679796898 instead of v6). `created_at` is TEXT and sorts reliably even in
+    // that window (0/12 in the same loop); the row's own `version` value reads clean when
+    // version isn't the sort/agg key. Tie-break by id for determinism on equal timestamps.
+    // Root cause is a Deeplake BIGINT read-after-write bug (filed against deeplake-api);
+    // this is the client-side workaround. See project_skillopt_prod_e2e_findings.
+    `ORDER BY created_at DESC, id DESC LIMIT 1`,
   );
   const r = rows?.[0];
   if (!r) return null;
