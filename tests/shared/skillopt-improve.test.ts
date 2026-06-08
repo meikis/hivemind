@@ -150,7 +150,7 @@ describe("improveSkillIfFailed", () => {
       invocationRetries: 5, invocationBackoffMs: 1000, sleep: async (ms: number) => { sleeps.push(ms); },
     }));
     expect(r).toMatchObject({ judged: true, failed: true, improved: true, version: 3 });
-    expect(sessionsCalls).toBeGreaterThanOrEqual(3);       // it kept polling past the stale reads
+    expect(sessionsCalls).toBe(4); // 3 retry polls (miss, miss, hit) + 1 windowAroundInvocation query
     expect(sleeps).toEqual([1000, 2000]);                  // linear backoff between the two misses, then hit
     expect(inserts).toHaveLength(1);
   });
