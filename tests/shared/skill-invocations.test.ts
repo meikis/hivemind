@@ -4,6 +4,7 @@ import {
   splitOrgSkill,
   listSkillInvocations,
   windowAroundInvocation,
+  parseMessage,
   type SkillInvocation,
 } from "../../src/skillify/skill-invocations.js";
 
@@ -16,6 +17,17 @@ const toolCall = (skill: string, sessionId = "S1", ts = "t", asString = false) =
   const msg = { type: "tool_call", tool_name: "Skill", tool_input: JSON.stringify({ skill }), session_id: sessionId, timestamp: ts };
   return { message: asString ? JSON.stringify(msg) : msg, last_update_date: ts };
 };
+
+describe("parseMessage", () => {
+  it("returns null for non-string/non-object inputs and bad JSON; parses strings + passes objects", () => {
+    expect(parseMessage(123)).toBeNull();        // number → null (the typeof-object miss)
+    expect(parseMessage(true)).toBeNull();        // boolean → null
+    expect(parseMessage(null)).toBeNull();        // null → null
+    expect(parseMessage("not json")).toBeNull();  // unparseable string → null
+    expect(parseMessage('{"a":1}')).toEqual({ a: 1 }); // JSON string → object
+    expect(parseMessage({ a: 1 })).toEqual({ a: 1 });  // object → passthrough
+  });
+});
 
 describe("invokedSkillRef", () => {
   it("returns the skill ref for a Skill tool_call (object or stringified input)", () => {
@@ -106,6 +118,20 @@ describe("windowAroundInvocation", () => {
     ]);
     const out = await windowAroundInvocation(fn, TABLE, inv, { before: 5, after: 5 });
     expect(out).toBe("USER: hi\n\nASSISTANT: bye"); // whole (short) transcript
+  });
+
+  it("drops rows from a different session_id (path-LIKE collision) and empty-content turns", async () => {
+    const { fn } = mockQuery([
+      { message: { type: "user_message", content: "real", session_id: "S1" } },
+      { message: { type: "user_message", content: "from another session", session_id: "OTHER" } }, // collision → dropped
+      { message: { type: "assistant_message", content: "", session_id: "S1" } }, // empty text → skipped
+      { message: { type: "tool_call", tool_name: "Skill", tool_input: JSON.stringify({ skill: "posthog-smoke--kamo" }), timestamp: "t5", session_id: "S1" } },
+      { message: { type: "user_message", content: "pushback", session_id: "S1" } },
+    ]);
+    const out = await windowAroundInvocation(fn, TABLE, inv, { before: 5, after: 5 });
+    expect(out).not.toContain("another session"); // OTHER session_id dropped
+    expect(out).toContain("real");
+    expect(out).toContain("pushback");
   });
 
   it("elides a window longer than maxChars", async () => {
