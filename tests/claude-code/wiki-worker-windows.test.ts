@@ -71,6 +71,12 @@ describe("resolveCliBin — Windows", () => {
     expect(resolveCliBin("claude")).toBe("C:\\npm\\claude.cmd");
   });
 
+  it("returns the first match when `where` lists no .exe/.cmd (e.g. only .ps1)", () => {
+    setPlatform("win32");
+    execFileSyncMock.mockReturnValue(["C:\\npm\\claude.ps1", "C:\\npm\\claude"].join("\r\n"));
+    expect(resolveCliBin("claude")).toBe("C:\\npm\\claude.ps1");
+  });
+
   it("falls back to ~/.claude/local/<cli>.cmd when `where` finds nothing", () => {
     setPlatform("win32");
     execFileSyncMock.mockImplementation(() => { throw new Error("INFO: Could not find files"); });
