@@ -15,6 +15,7 @@ import {
   TRANSFORMERS_PKG,
   uninstallEmbeddings,
   _linkAgentForTesting,
+  _installWithFallback,
 } from "../../src/cli/embeddings.js";
 import { _resetUserConfigForTesting, _setConfigPathForTesting, getEmbeddingsEnabled } from "../../src/user-config.js";
 
@@ -325,5 +326,83 @@ describe("uninstallEmbeddings — config flag side effect", () => {
     enableEmbeddings();
     uninstallEmbeddings();
     expect(getEmbeddingsEnabled()).toBe(false);
+  });
+});
+
+// ── _installWithFallback ──────────────────────────────────────────────────
+
+describe("_installWithFallback — npm install + fallback logic", () => {
+  it("happy path: calls npm install once with standard args and never retries", () => {
+    const exec = vi.fn();
+    _installWithFallback("/fake/shared", "/fake/shared/node_modules", exec);
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith(
+      "npm",
+      ["install", "--omit=dev", "--no-package-lock", "--no-audit", "--no-fund"],
+      expect.objectContaining({ cwd: "/fake/shared" }),
+    );
+  });
+
+  it("retry path: first call fails → retries with --ignore-scripts", () => {
+    let call = 0;
+    const exec = vi.fn(() => {
+      if (call++ === 0) throw new Error("sharp build failed");
+    }) as any;
+    _installWithFallback("/fake/shared", "/fake/nm", exec);
+    expect(exec).toHaveBeenCalledTimes(2);
+    const [, secondArgs] = exec.mock.calls[1] as [string, string[]];
+    expect(secondArgs).toContain("--ignore-scripts");
+  });
+
+  it("retry path: runs onnxruntime install script when it exists after --ignore-scripts", () => {
+    const sharedNm = join(tmpHome, "node_modules");
+    const onnxDir = join(sharedNm, "onnxruntime-node", "script");
+    mkdirSync(onnxDir, { recursive: true });
+    writeFileSync(join(onnxDir, "install.js"), "// stub");
+
+    let call = 0;
+    const exec = vi.fn(() => {
+      if (call++ === 0) throw new Error("sharp failed");
+    }) as any;
+
+    _installWithFallback(tmpHome, sharedNm, exec);
+
+    // npm install (fail) + npm install --ignore-scripts + node onnxScript
+    expect(exec).toHaveBeenCalledTimes(3);
+    const [thirdCmd, thirdArgs] = exec.mock.calls[2] as [string, string[]];
+    expect(thirdCmd).toBe("node");
+    expect(thirdArgs[0]).toContain("onnxruntime-node");
+    expect(thirdArgs[0]).toContain("install.js");
+  });
+
+  it("retry path: onnxruntime script failure warns but does not throw", () => {
+    const sharedNm = join(tmpHome, "node_modules");
+    const onnxDir = join(sharedNm, "onnxruntime-node", "script");
+    mkdirSync(onnxDir, { recursive: true });
+    writeFileSync(join(onnxDir, "install.js"), "// stub");
+
+    let call = 0;
+    const exec = vi.fn(() => {
+      if (call++ !== 1) throw new Error("fail"); // npm fail, onnx fail; retry succeeds
+    }) as any;
+
+    expect(() => _installWithFallback(tmpHome, sharedNm, exec)).not.toThrow();
+  });
+
+  it("hard-fail path: throws when retry with --ignore-scripts also fails", () => {
+    const exec = vi.fn(() => { throw new Error("disk full"); }) as any;
+    expect(() => _installWithFallback("/fake/shared", "/fake/nm", exec))
+      .toThrow("Embedding deps install failed even without scripts");
+  });
+
+  it("no onnxruntime script: skips the third exec call silently", () => {
+    // onnxruntime dir doesn't exist — existsSync returns false
+    let call = 0;
+    const exec = vi.fn(() => {
+      if (call++ === 0) throw new Error("sharp failed");
+    }) as any;
+    _installWithFallback("/fake/shared", join(tmpHome, "absent-nm"), exec);
+    // only 2 calls: first npm (fail) + retry npm --ignore-scripts
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 });
