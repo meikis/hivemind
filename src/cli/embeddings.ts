@@ -113,10 +113,26 @@ function ensureSharedDeps(): void {
       private: true,
       dependencies: { [TRANSFORMERS_PKG]: TRANSFORMERS_RANGE },
     });
-    execFileSync("npm", ["install", "--omit=dev", "--no-package-lock", "--no-audit", "--no-fund"], {
-      cwd: SHARED_DIR,
-      stdio: "inherit",
-    });
+    const npmArgs = ["install", "--omit=dev", "--no-package-lock", "--no-audit", "--no-fund"];
+    try {
+      execFileSync("npm", npmArgs, { cwd: SHARED_DIR, stdio: "inherit" });
+    } catch {
+      // sharp has no prebuilt binary for some Node versions (e.g. Node v26 on macOS)
+      // and requires node-gyp to build from source. Retry without scripts — sharp is
+      // only used for image processing; text embeddings are unaffected.
+      warn(`  Embeddings     native build failed; retrying without install scripts`);
+      warn(`  Embeddings     (sharp image support unavailable — text embeddings unaffected)`);
+      execFileSync("npm", [...npmArgs, "--ignore-scripts"], { cwd: SHARED_DIR, stdio: "inherit" });
+      // onnxruntime-node's postinstall downloads its prebuilt binary; re-run it
+      // explicitly since --ignore-scripts skipped it.
+      const onnxScript = join(SHARED_NODE_MODULES, "onnxruntime-node", "script", "install.js");
+      if (existsSync(onnxScript)) {
+        execFileSync("node", [onnxScript], {
+          cwd: join(SHARED_NODE_MODULES, "onnxruntime-node"),
+          stdio: "inherit",
+        });
+      }
+    }
   } else {
     log(`  Embeddings     shared deps already present at ${SHARED_DIR}`);
   }
