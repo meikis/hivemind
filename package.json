@@ -15,6 +15,7 @@
   },
   "files": [
     "bundle",
+    "embeddings",
     "codex/bundle",
     "codex/skills",
     "cursor/bundle",
