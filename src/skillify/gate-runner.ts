@@ -200,6 +200,9 @@ export function runGate(opts: GateRunOptions): GateRunResult {
   try {
     const result = runChildProcess(bin, args, {
       stdio: ["ignore", "pipe", "pipe"],
+      // Suppress the visible console window Windows would otherwise pop for
+      // a child of the console-less detached skillify worker. No-op on POSIX.
+      windowsHide: true,
       timeout: opts.timeoutMs ?? 120_000,
       maxBuffer: 8 * 1024 * 1024,
       env: { ...inheritedEnv.env, HIVEMIND_WIKI_WORKER: "1", HIVEMIND_CAPTURE: "false" },

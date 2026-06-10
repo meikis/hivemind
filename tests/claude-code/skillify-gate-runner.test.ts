@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { runGate, findAgentBin, type Agent } from "../../src/skillify/gate-runner.js";
+
+describe("gate-runner spawn options", () => {
+  it("passes windowsHide so the gate CLI never pops a console window on Windows", () => {
+    // The skillify worker is detached and console-less; without windowsHide
+    // on the inner CLI spawn, Windows allocates a visible console window.
+    // Source-level guard because the dispatch tests exec a real /usr/bin/echo
+    // and can't observe the options object.
+    const src = readFileSync(join(process.cwd(), "src/skillify/gate-runner.ts"), "utf-8");
+    expect(src).toContain("windowsHide: true");
+  });
+});
 
 describe("findAgentBin", () => {
   it("returns a path for each known agent (PATH lookup or fallback)", () => {

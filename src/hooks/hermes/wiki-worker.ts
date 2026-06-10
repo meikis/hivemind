@@ -186,6 +186,9 @@ async function main(): Promise<void> {
         "--ignore-user-config",
       ], {
         stdio: ["ignore", "pipe", "pipe"],
+        // Suppress the visible console window Windows would otherwise pop for
+        // a child of this console-less detached worker. No-op on POSIX.
+        windowsHide: true,
         timeout: 120_000,
         env: { ...process.env, HIVEMIND_WIKI_WORKER: "1", HIVEMIND_CAPTURE: "false" },
       });

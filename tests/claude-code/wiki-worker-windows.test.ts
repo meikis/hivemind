@@ -172,3 +172,26 @@ describe("buildTrailingPromptInvocation (codex / cursor / pi)", () => {
     expect(inv.args).toEqual([...FLAGS, "PROMPT-TEXT"]);
   });
 });
+
+describe("windowsHide — no visible console window for the summarizer CLI", () => {
+  // The wiki worker is spawned detached and console-less (spawn-detached.ts
+  // sets windowsHide on the worker itself). Without CREATE_NO_WINDOW on the
+  // INNER spawn too, Windows allocates a fresh visible console window titled
+  // after the CLI exe (users reported a bare "claude.exe" window popping up).
+  it("buildClaudeInvocation sets windowsHide on every branch", () => {
+    setPlatform("win32");
+    expect(buildClaudeInvocation("C:\\npm\\claude.cmd", "P").options.windowsHide).toBe(true);
+    expect(buildClaudeInvocation("C:\\pf\\claude.exe", "P").options.windowsHide).toBe(true);
+    setPlatform("linux");
+    expect(buildClaudeInvocation("/usr/local/bin/claude", "P").options.windowsHide).toBe(true);
+  });
+
+  it("buildTrailingPromptInvocation sets windowsHide on every branch", () => {
+    const FLAGS = ["exec"];
+    setPlatform("win32");
+    expect(buildTrailingPromptInvocation("C:\\npm\\codex.cmd", FLAGS, "P").options.windowsHide).toBe(true);
+    expect(buildTrailingPromptInvocation("C:\\pf\\codex.exe", FLAGS, "P").options.windowsHide).toBe(true);
+    setPlatform("linux");
+    expect(buildTrailingPromptInvocation("/usr/local/bin/codex", FLAGS, "P").options.windowsHide).toBe(true);
+  });
+});

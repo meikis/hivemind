@@ -35,13 +35,16 @@ export function buildClaudeInvocation(claudeBin: string, prompt: string): Claude
     return {
       file: claudeBin,
       args: ["-p", ...CLAUDE_FLAGS],
-      options: { input: prompt, stdio: ["pipe", "pipe", "pipe"], shell: true },
+      // windowsHide: the wiki worker is a detached, console-less process, so
+      // without CREATE_NO_WINDOW Windows allocates a visible console window
+      // (titled after the CLI exe) for the child. No-op on POSIX.
+      options: { input: prompt, stdio: ["pipe", "pipe", "pipe"], shell: true, windowsHide: true },
     };
   }
   return {
     file: claudeBin,
     args: ["-p", prompt, ...CLAUDE_FLAGS],
-    options: { stdio: ["ignore", "pipe", "pipe"] },
+    options: { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   };
 }
 
@@ -63,12 +66,14 @@ export function buildTrailingPromptInvocation(bin: string, flags: string[], prom
     return {
       file: bin,
       args: [...flags],
-      options: { input: prompt, stdio: ["pipe", "pipe", "pipe"], shell: true },
+      // windowsHide: see buildClaudeInvocation — suppress the visible console
+      // window Windows would pop for a child of the console-less worker.
+      options: { input: prompt, stdio: ["pipe", "pipe", "pipe"], shell: true, windowsHide: true },
     };
   }
   return {
     file: bin,
     args: [...flags, prompt],
-    options: { stdio: ["ignore", "pipe", "pipe"] },
+    options: { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
   };
 }
