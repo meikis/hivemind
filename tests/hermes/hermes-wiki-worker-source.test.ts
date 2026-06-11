@@ -29,7 +29,9 @@ describe("hermes wiki-worker source", () => {
   it("hermes spawn passes windowsHide (no visible console window on Windows)", () => {
     // hermes is the only worker that calls execFileSync directly instead of
     // going through the wiki-worker-spawn builders, so it needs its own guard.
-    expect(WORKER_SRC).toContain("windowsHide: true");
+    // Scoped to the hermesBin call ([^)]* = no closing paren in between) so
+    // the guard fails if the option drifts out of the spawn.
+    expect(WORKER_SRC).toMatch(/execFileSync\(\s*cfg\.hermesBin[^)]*windowsHide:\s*true/);
   });
 
   it("config carries hermesBin + hermesProvider + hermesModel (not codexBin)", () => {

@@ -9,8 +9,10 @@ describe("gate-runner spawn options", () => {
     // on the inner CLI spawn, Windows allocates a visible console window.
     // Source-level guard because the dispatch tests exec a real /usr/bin/echo
     // and can't observe the options object.
+    // Scoped to the runChildProcess call ([^)]* = no closing paren in
+    // between) so the guard fails if the option drifts out of the spawn.
     const src = readFileSync(join(process.cwd(), "src/skillify/gate-runner.ts"), "utf-8");
-    expect(src).toContain("windowsHide: true");
+    expect(src).toMatch(/runChildProcess\([^)]*windowsHide:\s*true/);
   });
 });
 
