@@ -67,7 +67,10 @@ npm install -g @deeplake/hivemind && hivemind install
 
 The installer detects every supported assistant on your machine (table below), wires up the hooks, and shows a one-line consent prompt before opening a browser for sign-in. Restart your assistants after install.
 
-**Headless / CI installs:** pass an API token instead of using the browser flow:
+<details>
+  <summary><b>Headless / CI installs</b></summary>
+
+Pass an API token instead of using the browser flow:
 
 ```bash
 HIVEMIND_TOKEN=<your-token> hivemind install
@@ -76,8 +79,10 @@ hivemind install --token <your-token>
 ```
 
 Get a token from your account settings on https://deeplake.ai. With no token in a non-interactive shell, the install completes with hooks but skips sign-in; run `hivemind login` later to enable shared memory.
+</details>
 
-**Install for a specific assistant only:**
+<details>
+  <summary><b>Install for a specific assistant only</b></summary>
 
 ```bash
 hivemind install --only claude
@@ -88,6 +93,7 @@ hivemind cursor install
 hivemind hermes install
 hivemind pi install
 ```
+</details>
 
 **Check what's wired up:**
 
