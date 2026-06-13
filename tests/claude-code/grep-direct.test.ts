@@ -15,6 +15,7 @@ vi.mock("../../src/embeddings/client.js", () => ({
 }));
 
 import { parseBashGrep, handleGrepDirect, type GrepParams } from "../../src/hooks/grep-direct.js";
+import { TRUNCATION_NOTICE } from "../../src/shell/grep-core.js";
 
 describe("handleGrepDirect", () => {
   const baseParams: GrepParams = {
@@ -109,19 +110,32 @@ describe("handleGrepDirect: truncation signaling", () => {
     return { query: vi.fn().mockImplementationOnce(async () => rows) } as any;
   }
 
-  it("appends an incomplete-results notice when a source hits the row cap", async () => {
+  it("appends the exact incomplete-results notice when a source hits the row cap", async () => {
     const rows = Array.from({ length: 100 }, (_, i) => ({
       path: `/summaries/s${i}.md`, content: "foo match", source_order: 0,
     }));
     const api = { query: vi.fn().mockResolvedValueOnce(rows) } as any;
     const r = await handleGrepDirect(api, "memory", "sessions", baseParams);
-    expect(String(r).toLowerCase()).toMatch(/cap|incomplete|more match|refine/);
+    expect(r).toContain(TRUNCATION_NOTICE);
+  });
+
+  it("emits the notice (not '(no matches)') when a truncated scan matched nothing in-window", async () => {
+    // Regex content-scan mode: 100 rows fetched (cap hit, truncated) but none
+    // match the in-memory regex — the real hit may be in rows we didn't scan.
+    // This must NOT read as a confirmed zero-match.
+    const rows = Array.from({ length: 100 }, (_, i) => ({
+      path: `/summaries/s${i}.md`, content: "unrelated body", source_order: 0,
+    }));
+    const api = { query: vi.fn().mockResolvedValueOnce(rows) } as any;
+    const r = await handleGrepDirect(api, "memory", "sessions", { ...baseParams, pattern: "ne+dle" });
+    expect(r).toBe(TRUNCATION_NOTICE);
+    expect(r).not.toBe("(no matches)");
   });
 
   it("does NOT add the notice for a normal, fully-returned result", async () => {
     const api = mockApi([{ path: "/summaries/a.md", content: "foo line", source_order: 0 }]);
     const r = await handleGrepDirect(api, "memory", "sessions", baseParams);
-    expect(String(r).toLowerCase()).not.toMatch(/cap|incomplete|more match|refine/);
+    expect(r).not.toContain(TRUNCATION_NOTICE);
   });
 });
 

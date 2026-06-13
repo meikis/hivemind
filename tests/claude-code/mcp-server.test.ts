@@ -168,7 +168,9 @@ describe("hivemind_search", () => {
     await importServer();
     const out = await registeredTools.get("hivemind_search")!.handler({ query: "x" }) as { content: { text: string }[] };
     expect(out.content[0].text).toContain("/summaries/alice/a.md");
-    expect(out.content[0].text.toLowerCase()).toContain("results incomplete");
+    expect(out.content[0].text).toContain(
+      "[hivemind: results incomplete — a per-source row cap was hit, so more matches likely exist. Narrow the path or use a more specific pattern to see them.]",
+    );
   });
 });
 

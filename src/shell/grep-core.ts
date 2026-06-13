@@ -670,14 +670,17 @@ export async function grepBothTables(
 
 /**
  * Append an explicit incomplete-results notice when a per-source row cap was
- * hit. Only added when there is at least one match — an empty result that was
- * also "truncated" still means zero matches were found and should read as such.
+ * hit. Emitted even when no lines matched: in regex content-scan mode only the
+ * first `limit` rows are fetched, so an empty refined result on a truncated
+ * fetch means "your match may be in the rows we didn't scan" — NOT a confirmed
+ * zero. Collapsing that back to "(no matches)" would reintroduce the exact
+ * silent failure this change exists to remove.
  */
 export const TRUNCATION_NOTICE =
   "[hivemind: results incomplete — a per-source row cap was hit, so more matches " +
   "likely exist. Narrow the path or use a more specific pattern to see them.]";
 
 export function withTruncationNotice(lines: string[], truncated: boolean): string[] {
-  if (truncated && lines.length > 0) return [...lines, TRUNCATION_NOTICE];
-  return lines;
+  if (!truncated) return lines;
+  return lines.length > 0 ? [...lines, TRUNCATION_NOTICE] : [TRUNCATION_NOTICE];
 }
