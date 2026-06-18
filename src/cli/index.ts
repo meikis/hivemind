@@ -513,7 +513,7 @@ async function main(): Promise<void> {
         `${r.failed ? `, ${r.failed} failed` : ""}.`);
       return;
     }
-    warn("Usage: hivemind memory backfill [--dry-run] [--force] [--n <num|all>] [--window-days N] [--project-only] | flush");
+    warn("Usage: hivemind memory backfill [--dry-run] [--force] [--n <num|all>] [--window-days N] [--project-only] [--verbose] | flush");
     process.exit(1);
   }
 

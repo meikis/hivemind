@@ -523,7 +523,7 @@ describe("hivemind memory", () => {
 
   it("unknown memory subcommand prints usage and exits 1", async () => {
     await runCli(["memory", "wat"]);
-    expect(stderrText()).toContain("Usage: hivemind memory backfill [--dry-run] [--force] [--n <num|all>] [--window-days N] [--project-only] | flush");
+    expect(stderrText()).toContain("Usage: hivemind memory backfill [--dry-run] [--force] [--n <num|all>] [--window-days N] [--project-only] [--verbose] | flush");
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });

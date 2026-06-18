@@ -412,9 +412,9 @@ export default defineConfig({
         // config (e.g. gate-runner 60, build-lock 55, skills-table 70).
         "src/skillify/pending-memory-manifest.ts":    { statements: 90, branches: 85, functions: 90, lines: 90 },
         "src/skillify/backfill-guards.ts":            { statements: 90, branches: 90, functions: 90, lines: 90 },
-        "src/skillify/stage-memory.ts":               { statements: 90, branches: 85, functions: 90, lines: 90 },
+        "src/skillify/stage-memory.ts":               { statements: 90, branches: 90, functions: 90, lines: 90 },
         "src/skillify/spawn-backfill-memory-worker.ts": { statements: 90, branches: 90, functions: 90, lines: 90 },
-        "src/commands/backfill-memory.ts":            { statements: 90, branches: 85, functions: 90, lines: 90 },
+        "src/commands/backfill-memory.ts":            { statements: 90, branches: 90, functions: 90, lines: 90 },
         // branches at 85 (not 90): the residual gaps are defensive catch/??
         // fallbacks, and v8 branch counting drifts a couple points across Node
         // versions (CI measured 88 where local measured 92), so the floor is

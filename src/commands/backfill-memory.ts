@@ -71,6 +71,7 @@ const DEFAULT_BUDGET_MS = 15 * 60 * 1000;
  */
 const IN_FLIGHT_MAX_AGE_MS = 60_000;
 
+/** Parsed options controlling a `memory backfill` run. */
 export interface BackfillOptions {
   /** Look-back window in days (sessions older than this are skipped). */
   windowDays: number;
@@ -82,10 +83,13 @@ export interface BackfillOptions {
   projectOnly: boolean;
   /** Max sessions to extract this run. null = no cap (`--n all`). */
   maxSessions: number | null;
+  /** List every per-session failure (key → reason) in the report. */
+  verbose: boolean;
   /** Working directory used for cwd-bias and project scoping. */
   cwd: string;
 }
 
+/** Parse `memory backfill` argv into options, ignoring malformed numeric flags. */
 export function parseBackfillArgs(argv: string[], cwd: string): BackfillOptions {
   const opts: BackfillOptions = {
     windowDays: DEFAULT_WINDOW_DAYS,
@@ -93,12 +97,14 @@ export function parseBackfillArgs(argv: string[], cwd: string): BackfillOptions 
     force: false,
     projectOnly: false,
     maxSessions: DEFAULT_MAX_SESSIONS,
+    verbose: false,
     cwd,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") opts.dryRun = true;
     else if (a === "--force") opts.force = true;
+    else if (a === "--verbose" || a === "-v") opts.verbose = true;
     else if (a === "--project-only") opts.projectOnly = true;
     else if (a === "--window-days") {
       const n = Number(argv[++i]);
@@ -115,6 +121,7 @@ export function parseBackfillArgs(argv: string[], cwd: string): BackfillOptions 
   return opts;
 }
 
+/** The computed work-list for a run: what's in-window, deduped, and to extract. */
 export interface BackfillPlan {
   windowDays: number;
   /** Cutoff epoch-ms; sessions with mtime < cutoff are excluded. */
@@ -188,6 +195,7 @@ export function planBackfill(opts: BackfillOptions, now: number): BackfillPlan {
   return planFromSessions(all, stagedSessionIds(), opts, now);
 }
 
+/** Render the human-readable plan/dry-run report (window, cap, by-agent counts). */
 export function renderPlan(plan: BackfillPlan, opts: BackfillOptions): string {
   const lines: string[] = [];
   lines.push(`memory backfill — ${opts.dryRun ? "DRY RUN" : "plan"}`);
@@ -204,16 +212,31 @@ export function renderPlan(plan: BackfillPlan, opts: BackfillOptions): string {
   return lines.join("\n");
 }
 
+/** One session's failed-extraction outcome, surfaced in the run report. */
+export interface BackfillFailure {
+  /** Composite agent-id staging key (matches the manifest key). */
+  session: string;
+  /** Why it failed: a stageSession reason code, or `threw: <message>`. */
+  reason: string;
+}
+
+/** Tally of an extract run: counts plus per-reason / per-session failure detail. */
 export interface ExtractSummary {
   attempted: number;
   staged: number;
   embedded: number;
   failed: number;
   timedOutOnBudget: boolean;
+  /** Per-reason failure tally, so a bare `N failed` is self-diagnosable. */
+  failureReasons: Record<string, number>;
+  /** Per-session failure detail, surfaced verbatim under --verbose. */
+  failures: BackfillFailure[];
 }
 
 /** One session → staged outcome. Injectable so the executor is testable. */
-export type StageFn = (session: SessionFile) => Promise<{ ok: boolean; embedded: boolean }>;
+export type StageFn = (
+  session: SessionFile,
+) => Promise<{ ok: boolean; embedded: boolean; reason?: string }>;
 
 /** Clock injectable for budget tests. */
 export type NowFn = () => number;
@@ -227,7 +250,7 @@ function defaultStageFn(cwd: string, perSessionTimeoutMs: number): StageFn {
       { sessionId: s.sessionId, jsonlPath: s.path, agent: s.agent, project },
       { claudeBin, timeoutMs: perSessionTimeoutMs, skipEmbed: false, now: () => new Date().toISOString() },
     );
-    return { ok: res.ok, embedded: res.embedded };
+    return { ok: res.ok, embedded: res.embedded, reason: res.reason };
   };
 }
 
@@ -251,7 +274,16 @@ export async function executeBackfill(
 ): Promise<ExtractSummary> {
   const stage = opts.stage ?? defaultStageFn(opts.cwd, opts.perSessionTimeoutMs);
   const now = opts.now ?? Date.now;
-  const summary: ExtractSummary = { attempted: 0, staged: 0, embedded: 0, failed: 0, timedOutOnBudget: false };
+  const summary: ExtractSummary = {
+    attempted: 0, staged: 0, embedded: 0, failed: 0,
+    timedOutOnBudget: false, failureReasons: {}, failures: [],
+  };
+
+  const recordFailure = (s: SessionFile, reason: string): void => {
+    summary.failed++;
+    summary.failureReasons[reason] = (summary.failureReasons[reason] ?? 0) + 1;
+    summary.failures.push({ session: backfillSessionKey(s.agent, s.sessionId), reason });
+  };
 
   const queue = [...toExtract];
   const deadline = opts.startMs + opts.budgetMs;
@@ -271,12 +303,12 @@ export async function executeBackfill(
           summary.staged++;
           if (res.embedded) summary.embedded++;
         } else {
-          summary.failed++;
+          recordFailure(s, res.reason ?? "unknown");
         }
-      } catch {
+      } catch (e) {
         // A stager that throws must not abort the whole run — count it as a
         // failed session and move on to the rest of the queue.
-        summary.failed++;
+        recordFailure(s, `threw: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }
@@ -293,31 +325,79 @@ export async function executeBackfill(
  * `hivemind memory backfill` invocation never owns the lock, so it must not
  * delete one another (spawned) process is holding.
  */
-function releaseBackfillLock(): void {
+export function releaseBackfillLock(lockPath: string = PENDING_MEMORY_LOCK_PATH): void {
   if (process.env.HIVEMIND_BACKFILL_LOCK_OWNED !== "1") return;
   try {
-    if (existsSync(PENDING_MEMORY_LOCK_PATH)) unlinkSync(PENDING_MEMORY_LOCK_PATH);
+    if (existsSync(lockPath)) unlinkSync(lockPath);
   } catch { /* best-effort */ }
 }
 
+/** CLI entry for `hivemind memory backfill`: plan, then extract unless --dry-run. */
 export async function runBackfillMemory(argv: string[]): Promise<number> {
   const cwd = process.cwd();
   const opts = parseBackfillArgs(argv, cwd);
-  const plan = planBackfill(opts, Date.now());
-
-  process.stdout.write(renderPlan(plan, opts) + "\n");
-
-  // Dry-run doesn't acquire/own the lock (the spawn path only locks for a
-  // real run), so leave it untouched here.
-  if (opts.dryRun) return 0;
+  // Everything that can throw runs inside the try so the finally always
+  // releases the lock — a planBackfill/renderPlan failure must not strand a
+  // worker-owned lock. releaseBackfillLock is itself a no-op unless this
+  // process owns the lock, so the dry-run early return is safe under it.
   try {
-    return await runExtract(plan, cwd);
+    const plan = planBackfill(opts, Date.now());
+    process.stdout.write(renderPlan(plan, opts) + "\n");
+    if (opts.dryRun) return 0;
+    return await runExtract(plan, cwd, opts);
   } finally {
     releaseBackfillLock();
   }
 }
 
-async function runExtract(plan: BackfillPlan, cwd: string): Promise<number> {
+/**
+ * Render the failure diagnostics for a finished run. Always emits a
+ * per-reason tally when anything failed (so a bare `N failed` is never a
+ * dead end), and lists every failing session under --verbose. Returns the
+ * lines to print; empty when nothing failed.
+ */
+export function renderFailures(result: ExtractSummary, verbose: boolean): string[] {
+  if (result.failed === 0) return [];
+  const lines: string[] = [];
+  const reasons = Object.keys(result.failureReasons).sort();
+  lines.push(`  ${result.failed} session(s) failed:`);
+  for (const r of reasons) lines.push(`    ${r}: ${result.failureReasons[r]}`);
+  if (verbose) {
+    lines.push("  failing sessions:");
+    for (const f of result.failures) lines.push(`    ${f.session} — ${f.reason}`);
+  } else {
+    lines.push("  re-run with --verbose to list each failing session.");
+  }
+  return lines;
+}
+
+/**
+ * Pure render of a finished extract run: the staged-count headline, the
+ * failure diagnostics, and the process exit code. Exit 1 only when the run
+ * was a total wash (something failed and nothing staged) so install-time
+ * callers can detect a hard failure; a partial success still exits 0.
+ */
+export function summarizeExtract(
+  result: ExtractSummary,
+  verbose: boolean,
+): { lines: string[]; exitCode: number } {
+  const lines: string[] = [
+    `staged ${result.staged}/${result.attempted} session(s) ` +
+      `(${result.embedded} embedded, ${result.failed} failed` +
+      `${result.timedOutOnBudget ? ", budget reached" : ""}). ` +
+      `Sign in and run the flush to push them into team memory.`,
+    ...renderFailures(result, verbose),
+  ];
+  const exitCode = result.failed > 0 && result.staged === 0 ? 1 : 0;
+  return { lines, exitCode };
+}
+
+/**
+ * Execute the planned extraction and print the outcome. Returns the process
+ * exit code (1 only on a total wash — see {@link summarizeExtract}); a no-op
+ * when the plan is empty.
+ */
+export async function runExtract(plan: BackfillPlan, cwd: string, opts: BackfillOptions): Promise<number> {
 
   if (plan.toExtract.length === 0) {
     process.stdout.write("nothing to extract; all in-window sessions already staged.\n");
@@ -332,12 +412,8 @@ async function runExtract(plan: BackfillPlan, cwd: string): Promise<number> {
     startMs: Date.now(),
   });
 
-  process.stdout.write(
-    `staged ${result.staged}/${result.attempted} session(s) ` +
-      `(${result.embedded} embedded, ${result.failed} failed` +
-      `${result.timedOutOnBudget ? ", budget reached" : ""}). ` +
-      `Sign in and run the flush to push them into team memory.\n`,
-  );
+  const { lines, exitCode } = summarizeExtract(result, opts.verbose);
+  process.stdout.write(lines.join("\n") + "\n");
   void homedir;
-  return result.failed > 0 && result.staged === 0 ? 1 : 0;
+  return exitCode;
 }

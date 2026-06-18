@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, chmodSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { stageSession, resolveClaudeBin, type StageOptions } from "../../src/skillify/stage-memory.js";
+import { stageSession, resolveClaudeBin, planClaudeSpawn, type StageOptions } from "../../src/skillify/stage-memory.js";
 import { readPendingMemoryManifest } from "../../src/skillify/pending-memory-manifest.js";
 
 let dir: string;
@@ -143,6 +143,49 @@ describe("stageSession", () => {
   it("resolveClaudeBin returns a non-empty path", () => {
     expect(typeof resolveClaudeBin()).toBe("string");
     expect(resolveClaudeBin().length).toBeGreaterThan(0);
+  });
+
+  describe("planClaudeSpawn", () => {
+    it("Unix (prompt-as-arg): prompt rides argv, stdin ignored, no shell", () => {
+      // What buildClaudeInvocation returns on Unix / a Windows .exe.
+      const plan = planClaudeSpawn({
+        file: "/usr/bin/claude",
+        args: ["-p", "PROMPT", "--model", "haiku"],
+        options: { stdio: ["ignore", "pipe", "pipe"] },
+      });
+      expect(plan).toMatchObject({
+        file: "/usr/bin/claude",
+        args: ["-p", "PROMPT", "--model", "haiku"],
+        stdio: ["ignore", "ignore", "ignore"],
+        shell: false,
+        stdinInput: null,
+      });
+    });
+
+    it("Windows (.cmd shim): prompt rides stdin, stdin piped, shell on", () => {
+      // What buildClaudeInvocation returns for a `.cmd`/`.bat` shim.
+      const plan = planClaudeSpawn({
+        file: "C:/claude.cmd",
+        args: ["-p", "--model", "haiku"],
+        options: { input: "PROMPT", stdio: ["pipe", "pipe", "pipe"], shell: true },
+      });
+      expect(plan).toMatchObject({
+        file: "C:/claude.cmd",
+        stdio: ["pipe", "ignore", "ignore"],
+        shell: true,
+        stdinInput: "PROMPT",
+      });
+    });
+
+    it("shell with a non-string input keeps stdin ignored (no prompt to pipe)", () => {
+      const plan = planClaudeSpawn({
+        file: "claude.cmd",
+        args: [],
+        options: { stdio: ["pipe", "pipe", "pipe"], shell: true },
+      });
+      expect(plan.stdinInput).toBeNull();
+      expect(plan.stdio[0]).toBe("ignore");
+    });
   });
 
   // Exercise the REAL default runClaude (spawn path) via a fake executable
