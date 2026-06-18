@@ -87,6 +87,8 @@ describe("default runClaude — shell/stdin (Windows .cmd) branch", () => {
     );
     expect(r.ok).toBe(true);
     expect(existsSync(join(stagingDir, "claude_code-s1.md"))).toBe(true);
-    expect(readFileSync(join(stagingDir, "claude_code-s1.md"), "utf-8")).toContain("from stdin");
+    expect(readFileSync(join(stagingDir, "claude_code-s1.md"), "utf-8")).toBe(
+      "# Session s1\n## What Happened\nfrom stdin\n",
+    );
   });
 });
