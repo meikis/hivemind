@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, fix/windows-ci-green]  # TEMP: drive windows-test on this branch; revert before merge
   # Run on every PR regardless of base branch. The `branches` filter on
   # pull_request only matches base, so stacked / long-lived branches
   # (e.g. `optimizations`) would otherwise skip the whole CI job.
