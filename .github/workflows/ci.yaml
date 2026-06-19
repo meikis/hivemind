@@ -369,8 +369,15 @@ jobs:
       - name: Audit openclaw bundle against ClawHub static-scan rules
         run: npm run audit:openclaw -- --criticals-only
 
-      - name: Run tests with coverage
-        run: npx vitest run --coverage
+      - name: Run tests
+        # No --coverage here: this job exists to catch Windows-only test
+        # FAILURES, and per-file coverage thresholds are enforced on the Linux
+        # `test` job. Several suites are platform-skipped on Windows
+        # (skipIf(win32) for the Unix-socket embed daemon, /bin/sh safe-echo,
+        # Unix file-mode bits, etc.), so their src files can't meet the
+        # thresholds here by design — enforcing coverage on Windows would fail
+        # on those skips, not on any real regression.
+        run: npx vitest run
 
       - name: Write coverage summary to job page
         if: always()
