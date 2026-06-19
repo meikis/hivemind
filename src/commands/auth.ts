@@ -91,13 +91,24 @@ async function apiDelete(path: string, token: string, apiUrl: string, orgId?: st
 
 // ── Device Flow ──────────────────────────────────────────────────────────────
 
-export async function requestDeviceCode(apiUrl = DEFAULT_API_URL): Promise<DeviceCodeResponse> {
+// Returns `{ "X-Hivemind-Referrer": "<code>" }` for spreading into a headers
+// object, or `{}` when there is no referral. The backend parks this code against
+// the device flow and attributes the signup if a NEW user registers. Trimmed
+// here; the backend lowercases + validates against its affiliate registry.
+export function hivemindReferrerHeader(ref?: string): Record<string, string> {
+  const code = ref?.trim();
+  if (!code) return {};
+  return { "X-Hivemind-Referrer": code };
+}
+
+export async function requestDeviceCode(apiUrl = DEFAULT_API_URL, ref?: string): Promise<DeviceCodeResponse> {
   const resp = await fetch(`${apiUrl}/auth/device/code`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...deeplakeClientHeader(),
       ...hivemindInstallIDHeader(),
+      ...hivemindReferrerHeader(ref),
     },
   });
   if (!resp.ok) throw new Error(`Device flow unavailable: HTTP ${resp.status}`);
@@ -136,8 +147,8 @@ function openBrowser(url: string): boolean {
   }
 }
 
-export async function deviceFlowLogin(apiUrl = DEFAULT_API_URL): Promise<{ token: string; expiresIn: number }> {
-  const code = await requestDeviceCode(apiUrl);
+export async function deviceFlowLogin(apiUrl = DEFAULT_API_URL, ref?: string): Promise<{ token: string; expiresIn: number }> {
+  const code = await requestDeviceCode(apiUrl, ref);
 
   const opened = openBrowser(code.verification_uri_complete);
   const msg = [
@@ -415,7 +426,7 @@ export async function saveCredentialsFromToken(
   return creds;
 }
 
-export async function login(apiUrl = DEFAULT_API_URL): Promise<Credentials> {
-  const { token: authToken } = await deviceFlowLogin(apiUrl);
+export async function login(apiUrl = DEFAULT_API_URL, ref?: string): Promise<Credentials> {
+  const { token: authToken } = await deviceFlowLogin(apiUrl, ref);
   return saveCredentialsFromToken(authToken, apiUrl, { skipTokenMint: false });
 }
