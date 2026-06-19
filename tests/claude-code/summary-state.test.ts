@@ -590,15 +590,20 @@ describe("cross-process concurrency", () => {
   // .pathname form yields "/C:/…" on Windows, which import() rejects.
   const modUrl = new URL("../../src/hooks/summary-state.ts", import.meta.url).href;
 
+  // Run inline TS in a child WITHOUT a shell: write it to a temp file and
+  // invoke `node --import tsx`. `npx tsx -e <code>` breaks on Windows — npx is
+  // a .cmd needing a shell, and cmd.exe mangles the multi-line code arg
+  // ("Transform failed"). process.execPath is absolute (no shell) and the
+  // script rides a file path (no arg-mangling).
+  let runSeq = 0;
   const runParallel = async (code: string, N: number, sid: string): Promise<string[]> => {
     const runs = Array.from({ length: N }, () =>
       new Promise<string>((resolve, reject) => {
-        // npx is npx.cmd on Windows; spawn() without a shell can't run a .cmd
-        // shim. Route through the shell only there (Unix stays shell-free).
-        const child = spawn("npx", ["tsx", "-e", code], {
+        const file = join(tmpHome, `rmw-${runSeq++}.mts`);
+        writeFileSync(file, code);
+        const child = spawn(process.execPath, ["--import", "tsx", file], {
           env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome, TEST_SID: sid },
           stdio: ["ignore", "pipe", "pipe"],
-          shell: process.platform === "win32",
         });
         let out = "";
         child.stdout.on("data", (d: Buffer) => { out += d.toString(); });

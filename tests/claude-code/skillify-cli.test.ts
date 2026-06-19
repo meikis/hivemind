@@ -251,9 +251,12 @@ describe("pull", () => {
   it("--to project lands files in cwd/.claude/skills", async () => {
     const dir = mkdtempSync(join(tmpdir(), "skillify-cli-pull-"));
     process.chdir(dir);
+    // Use process.cwd(), not `dir`: on Windows they can differ (8.3 short path
+    // vs long form), and the product builds the destination from cwd.
+    const cwd = process.cwd();
     runSkillifyCommand(["pull", "--to", "project", "--dry-run"]);
     await new Promise(r => setImmediate(r));
-    expect(logged.join("\n")).toContain(`Destination: ${join(dir, ".claude", "skills")}`);
+    expect(logged.join("\n")).toContain(`Destination: ${join(cwd, ".claude", "skills")}`);
     process.chdir(originalCwd);
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });
@@ -346,8 +349,10 @@ describe("unpull", () => {
   it("--to project scopes the scanning root to cwd", () => {
     const dir = mkdtempSync(join(tmpdir(), "skillify-cli-unpull-proj-"));
     process.chdir(dir);
+    // process.cwd(), not `dir`: they can differ on Windows (short vs long path).
+    const cwd = process.cwd();
     runSkillifyCommand(["unpull", "--to", "project", "--dry-run"]);
-    expect(logged.join("\n")).toContain(join(dir, ".claude", "skills"));
+    expect(logged.join("\n")).toContain(join(cwd, ".claude", "skills"));
     process.chdir(originalCwd);
     rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   });

@@ -489,6 +489,22 @@ describe("enqueueNotification cross-process safety", () => {
   // which a dynamic import() rejects as an invalid specifier.
   const modPath = new URL("../../src/notifications/queue.ts", import.meta.url).href;
 
+  // Run inline TS in a child WITHOUT a shell: write it to a temp file and
+  // invoke `node --import tsx`. Passing the code as `npx tsx -e <code>` breaks
+  // on Windows — npx is a .cmd that needs a shell, and cmd.exe mangles the
+  // code arg ("Transform failed"). process.execPath is absolute (no shell)
+  // and the script rides a file path (no arg-mangling).
+  let producerSeq = 0;
+  function runProducer(code: string, extraEnv: Record<string, string> = {}) {
+    const file = join(TEMP_HOME, `producer-${producerSeq++}.mts`);
+    writeFileSync(file, code);
+    return spawnSync(process.execPath, ["--import", "tsx", file], {
+      env: { ...process.env, HOME: TEMP_HOME, USERPROFILE: TEMP_HOME, ...extraEnv },
+      encoding: "utf-8",
+      timeout: 30_000,
+    });
+  }
+
   it("cross-process producers with identical (id, dedupKey) collapse to one queue entry", async () => {
     // Regression for CodeRabbit #8/#12: previously fresh hook processes
     // would re-enqueue the same notification until the next drain. Two
@@ -504,14 +520,7 @@ describe("enqueueNotification cross-process safety", () => {
       `  process.stdout.write("ok"); ` +
       `});`;
     for (let i = 0; i < 3; i++) {
-      const r = spawnSync("npx", ["tsx", "-e", code], {
-        // USERPROFILE so os.homedir resolves the temp home on Windows; shell
-        // because `npx` is `npx.cmd` there and can't be spawned directly.
-        env: { ...process.env, HOME: TEMP_HOME, USERPROFILE: TEMP_HOME },
-        encoding: "utf-8",
-        timeout: 30_000,
-        shell: process.platform === "win32",
-      });
+      const r = runProducer(code);
       expect(r.status, `producer ${i} stderr=${(r.stderr || "").slice(0, 300)}`).toBe(0);
     }
     const q = readQueue().queue;
@@ -533,12 +542,7 @@ describe("enqueueNotification cross-process safety", () => {
 
     const runs = Array.from({ length: N }, (_, i) =>
       new Promise<void>((resolve, reject) => {
-        const r = spawnSync("npx", ["tsx", "-e", code], {
-          env: { ...process.env, HOME: TEMP_HOME, USERPROFILE: TEMP_HOME, PRODUCER_IDX: String(i) },
-          encoding: "utf-8",
-          timeout: 30_000,
-          shell: process.platform === "win32",
-        });
+        const r = runProducer(code, { PRODUCER_IDX: String(i) });
         if (r.status !== 0) {
           reject(new Error(`producer ${i} exit=${r.status} stderr=${(r.stderr || "").slice(0, 300)}`));
         } else {
