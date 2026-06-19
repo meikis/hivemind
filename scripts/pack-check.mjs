@@ -14,7 +14,10 @@ const FORBIDDEN = [
   /(^|\/)\.git(\/|$)/,
 ];
 
-const raw = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+// On Windows the npm shim is `npm.cmd`; execFileSync can't launch a bare
+// `npm` (ENOENT). Use the platform-correct binary name.
+const npmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+const raw = execFileSync(npmBin, ['pack', '--dry-run', '--json'], {
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'inherit'],
 });
