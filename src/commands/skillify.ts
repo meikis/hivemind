@@ -249,7 +249,7 @@ async function pullSkills(args: string[]): Promise<void> {
   }
 
   // Pretty output
-  const dest = toRaw === "global" ? join(homedir(), ".claude", "skills") : `${process.cwd()}/.claude/skills`;
+  const dest = toRaw === "global" ? join(homedir(), ".claude", "skills") : join(process.cwd(), ".claude", "skills");
   const filterDesc = users.length === 0 ? "all users" : users.join(", ");
   console.log(`Destination: ${dest}`);
   console.log(`Filter:      ${filterDesc}${skillName ? ` · skill='${skillName}'` : ""}${dryRun ? " · dry-run" : ""}${force ? " · force" : ""}`);
@@ -315,7 +315,7 @@ async function unpullSkills(args: string[]): Promise<void> {
     legacyCleanup,
   });
 
-  const dest = toRaw === "global" ? join(homedir(), ".claude", "skills") : `${process.cwd()}/.claude/skills`;
+  const dest = toRaw === "global" ? join(homedir(), ".claude", "skills") : join(process.cwd(), ".claude", "skills");
   const filterParts: string[] = [];
   if (users.length > 0) filterParts.push(`users=${users.join(",")}`);
   if (notMine) filterParts.push("not-mine");
