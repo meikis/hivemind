@@ -3,6 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
+// Logged paths use the native separator (product builds them with path.join).
+// Compare against join(...) substrings rather than "/"-literal regexes so the
+// assertions hold on Windows too.
+
 // Mock the loadConfig + DeeplakeApi so the pull subcommand can run without
 // hitting the network. The mock returns a fake row from the skills table.
 // loadConfig is a vi.fn so individual tests can swap in null (unauthenticated)
@@ -238,7 +242,7 @@ describe("pull", () => {
   it("--to global is default destination", async () => {
     runSkillifyCommand(["pull", "--dry-run"]);
     await new Promise(r => setImmediate(r));
-    expect(logged.join("\n")).toMatch(/Destination:.*\.claude\/skills/);
+    expect(logged.join("\n")).toContain(join(".claude", "skills"));
   });
 
   it("--to project lands files in cwd/.claude/skills", async () => {
@@ -246,7 +250,7 @@ describe("pull", () => {
     process.chdir(dir);
     runSkillifyCommand(["pull", "--to", "project", "--dry-run"]);
     await new Promise(r => setImmediate(r));
-    expect(logged.join("\n")).toMatch(new RegExp(`Destination:\\s+${dir}/.claude/skills`));
+    expect(logged.join("\n")).toContain(`Destination: ${join(dir, ".claude", "skills")}`);
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -339,7 +343,7 @@ describe("unpull", () => {
     const dir = mkdtempSync(join(tmpdir(), "skillify-cli-unpull-proj-"));
     process.chdir(dir);
     runSkillifyCommand(["unpull", "--to", "project", "--dry-run"]);
-    expect(logged.join("\n")).toMatch(new RegExp(`Scanning:\\s+${dir}/.claude/skills`));
+    expect(logged.join("\n")).toContain(join(dir, ".claude", "skills"));
     rmSync(dir, { recursive: true, force: true });
   });
 

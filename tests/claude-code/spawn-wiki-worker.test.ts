@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 
 import { spawnWikiWorker, bundleDirFromImportMeta, findClaudeBin } from "../../src/hooks/spawn-wiki-worker.js";
@@ -270,14 +271,22 @@ describe("bundleDirFromImportMeta", () => {
   // Each agent ships its own copy of this helper; assert every copy resolves
   // the parent dir of the entry module (mirrors how each hook bootstrap calls
   // it) so no copy drifts or goes uncovered.
-  const fakeUrl = "file:///path/to/some/bundle/capture.js";
+  //
+  // `fileURLToPath` requires a platform-ABSOLUTE path: a POSIX-rooted URL
+  // (`file:///path/...`) throws "File URL path must be absolute" on Windows,
+  // which needs a drive letter (`file:///C:/path/...`). Build the fixture URL
+  // + expected dir from `pathToFileURL` on a real absolute path so the test
+  // is correct on every OS without asserting against a hardcoded string.
+  const isWin = process.platform === "win32";
+  const absDir = isWin ? "C:\\path\\to\\some\\bundle" : "/path/to/some/bundle";
+  const fakeUrl = pathToFileURL(join(absDir, "capture.js")).href;
   it.each([
     ["claude", bundleDirFromImportMeta],
     ["codex", codexBundleDir],
     ["cursor", cursorBundleDir],
     ["hermes", hermesBundleDir],
   ])("%s: returns the directory containing the entry module", (_agent, fn) => {
-    expect(fn(fakeUrl)).toBe("/path/to/some/bundle");
+    expect(fn(fakeUrl)).toBe(absDir);
   });
 });
 
@@ -307,16 +316,21 @@ describe("per-agent bin resolvers", () => {
     ["hermes", findHermesBin, "hermes", "hermes"],
   ];
 
+  // resolveCliBin probes the PATH with the platform-native lookup command:
+  // `which` on POSIX, `where` on Windows. The mock returns the same canned
+  // path regardless, so only the asserted command name is platform-dependent.
+  const lookupCmd = process.platform === "win32" ? "where" : "which";
+
   it.each(RESOLVERS)("find%sBin returns the resolved path when the lookup succeeds", (_n, fn, _fallback, cli) => {
     vi.mocked(execFileSync).mockReturnValueOnce("/usr/local/bin/the-cli\n");
     expect(fn()).toBe("/usr/local/bin/the-cli");
-    expect(execFileSync).toHaveBeenCalledWith("which", [cli], { encoding: "utf-8" });
+    expect(execFileSync).toHaveBeenCalledWith(lookupCmd, [cli], { encoding: "utf-8" });
   });
 
   it.each(RESOLVERS)("find%sBin falls back to the literal name when the lookup fails", (_n, fn, fallback, cli) => {
     vi.mocked(execFileSync).mockImplementationOnce(() => { throw new Error("not found"); });
     expect(fn()).toBe(fallback);
-    expect(execFileSync).toHaveBeenCalledWith("which", [cli], { encoding: "utf-8" });
+    expect(execFileSync).toHaveBeenCalledWith(lookupCmd, [cli], { encoding: "utf-8" });
   });
 
   it.each(RESOLVERS)(

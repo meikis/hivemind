@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute } from "node:path";
 import { tmpdir, homedir } from "node:os";
 
 import {
@@ -41,7 +41,7 @@ describe("HOME", () => {
 describe("pkgRoot", () => {
   it("returns an absolute path that contains a package.json", () => {
     const root = pkgRoot();
-    expect(root).toMatch(/^\//);
+    expect(isAbsolute(root)).toBe(true);
     // The package.json at pkgRoot's parent or pkgRoot itself describes the
     // hivemind package — installers read it via getVersion().
     expect(existsSync(join(root, "package.json")) || existsSync(join(root, "..", "package.json"))).toBe(true);

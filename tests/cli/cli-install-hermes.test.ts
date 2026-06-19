@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import * as yaml from "js-yaml";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 /**
  * Tests for src/cli/install-hermes.ts. This is the most surface-area-rich
@@ -35,14 +36,14 @@ beforeEach(() => {
 
   writeFileSync(join(tmpPkg, "package.json"), JSON.stringify({ version: "3.4.5" }));
 
-  vi.stubEnv("HOME", tmpHome);
+  setFakeHome(tmpHome);
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
 
 afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
-  vi.unstubAllEnvs();
+  clearFakeHome();
   vi.restoreAllMocks();
   vi.resetModules();
 });

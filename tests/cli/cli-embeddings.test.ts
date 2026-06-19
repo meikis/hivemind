@@ -112,7 +112,10 @@ describe("isSharedDepsInstalled", () => {
 
 describe("SHARED_DAEMON_PATH", () => {
   it("points at embed-daemon.js inside the shared-deps dir (canonical location agents use)", () => {
-    expect(SHARED_DAEMON_PATH.endsWith("/embed-deps/embed-daemon.js")).toBe(true);
+    // Normalize separators: SHARED_DAEMON_PATH is built with join(), so it ends
+    // in `\embed-deps\embed-daemon.js` on Windows. Compare against a join()-built
+    // suffix with both sides slashed rather than a hard-coded POSIX literal.
+    expect(SHARED_DAEMON_PATH.replace(/\\/g, "/").endsWith(join("embed-deps", "embed-daemon.js").replace(/\\/g, "/"))).toBe(true);
   });
 });
 

@@ -586,14 +586,19 @@ describe("cross-process concurrency", () => {
   // (tryAcquireLock) across processes, so these tests are a real stress test
   // of the lock. Session id comes via env (TEST_SID) because tsx's `-e` flag
   // does not forward positional args reliably across node versions.
-  const modPath = new URL("../../src/hooks/summary-state.ts", import.meta.url).pathname;
+  // A file:// URL is a valid ESM import specifier on every platform; the bare
+  // .pathname form yields "/C:/…" on Windows, which import() rejects.
+  const modUrl = new URL("../../src/hooks/summary-state.ts", import.meta.url).href;
 
   const runParallel = async (code: string, N: number, sid: string): Promise<string[]> => {
     const runs = Array.from({ length: N }, () =>
       new Promise<string>((resolve, reject) => {
+        // npx is npx.cmd on Windows; spawn() without a shell can't run a .cmd
+        // shim. Route through the shell only there (Unix stays shell-free).
         const child = spawn("npx", ["tsx", "-e", code], {
-          env: { ...process.env, HOME: tmpHome, TEST_SID: sid },
+          env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome, TEST_SID: sid },
           stdio: ["ignore", "pipe", "pipe"],
+          shell: process.platform === "win32",
         });
         let out = "";
         child.stdout.on("data", (d: Buffer) => { out += d.toString(); });
@@ -608,7 +613,7 @@ describe("cross-process concurrency", () => {
     const sid = newSessionId();
     const N = 8;
     const code =
-      `import("${modPath}").then(m => { ` +
+      `import("${modUrl}").then(m => { ` +
       `  const s = m.bumpTotalCount(process.env.TEST_SID); ` +
       `  process.stdout.write(String(s.totalCount)); ` +
       `});`;
@@ -623,7 +628,7 @@ describe("cross-process concurrency", () => {
     const sid = newSessionId();
     const N = 8;
     const code =
-      `import("${modPath}").then(m => { ` +
+      `import("${modUrl}").then(m => { ` +
       `  process.stdout.write(m.tryAcquireLock(process.env.TEST_SID) ? "1" : "0"); ` +
       `});`;
 

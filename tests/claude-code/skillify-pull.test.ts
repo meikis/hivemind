@@ -124,7 +124,7 @@ describe("resolvePullDestination", () => {
   });
 
   it("returns <cwd>/.claude/skills for project with cwd", () => {
-    expect(resolvePullDestination("project", "/tmp/foo")).toBe("/tmp/foo/.claude/skills");
+    expect(resolvePullDestination("project", "/tmp/foo")).toBe(join("/tmp/foo", ".claude", "skills"));
   });
 
   it("throws for project without cwd", () => {

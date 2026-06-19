@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 /**
  * Tests for src/cli/install-openclaw.ts. The installer mirrors the
@@ -27,14 +28,14 @@ beforeEach(() => {
   writeFileSync(join(tmpPkg, "harnesses", "openclaw", "skills", "hivemind.md"), "skill body");
   writeFileSync(join(tmpPkg, "package.json"), JSON.stringify({ version: "1.2.3" }));
 
-  vi.stubEnv("HOME", tmpHome);
+  setFakeHome(tmpHome);
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
 
 afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
-  vi.unstubAllEnvs();
+  clearFakeHome();
   vi.restoreAllMocks();
   vi.resetModules();
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 /**
  * Tests for the disk-side of src/cli/install-codex.ts.
@@ -45,7 +46,7 @@ beforeEach(() => {
   // Mock package.json so getVersion() resolves to a known value.
   writeFileSync(join(tmpPkg, "package.json"), JSON.stringify({ version: "1.2.3" }));
 
-  vi.stubEnv("HOME", tmpHome);
+  setFakeHome(tmpHome);
   execFileSyncMock.mockReset();
   // Silence stdout/stderr noise from the installer's log() calls.
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
@@ -54,7 +55,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
-  vi.unstubAllEnvs();
+  clearFakeHome();
   vi.restoreAllMocks();
   vi.resetModules();
 });
@@ -312,8 +313,11 @@ describe("installCodex — happy path", () => {
     // SessionStart has exactly one entry — the canonical one — and the
     // foreign /tmp/old-clone path is gone.
     expect(hooks.hooks.SessionStart).toHaveLength(1);
-    const cmd = hooks.hooks.SessionStart[0].hooks[0].command;
-    expect(cmd).toContain(`${tmpHome}/.codex/hivemind/bundle/session-start.js`);
+    // Normalize separators: on Windows the command is written with backslashes
+    // (join()), so compare against a join()-built path with both sides slashed.
+    const cmd = hooks.hooks.SessionStart[0].hooks[0].command.replace(/\\/g, "/");
+    const canonical = join(tmpHome, ".codex", "hivemind", "bundle", "session-start.js").replace(/\\/g, "/");
+    expect(cmd).toContain(canonical);
     expect(cmd).not.toContain("/tmp/old-clone");
 
     const warns = stderrCalls.join("");
@@ -366,10 +370,12 @@ describe("installCodex — happy path", () => {
     // Stripped from both events — only our canonical entries remain.
     expect(hooks.hooks.PostToolUse).toHaveLength(1);
     expect(hooks.hooks.PreToolUse).toHaveLength(1);
-    expect(hooks.hooks.PostToolUse[0].hooks[0].command)
-      .toContain(`${tmpHome}/.codex/hivemind/bundle/capture.js`);
-    expect(hooks.hooks.PreToolUse[0].hooks[0].command)
-      .toContain(`${tmpHome}/.codex/hivemind/bundle/pre-tool-use.js`);
+    // Normalize separators (Windows join() writes backslashes).
+    const slash = (s: string): string => s.replace(/\\/g, "/");
+    expect(slash(hooks.hooks.PostToolUse[0].hooks[0].command))
+      .toContain(slash(join(tmpHome, ".codex", "hivemind", "bundle", "capture.js")));
+    expect(slash(hooks.hooks.PreToolUse[0].hooks[0].command))
+      .toContain(slash(join(tmpHome, ".codex", "hivemind", "bundle", "pre-tool-use.js")));
 
     // And: no foreign warning, because neither entry passed isForeign (the
     // malformed siblings made `.every()` return false in both).

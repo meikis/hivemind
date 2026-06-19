@@ -93,7 +93,10 @@ describe("saveCredentials", () => {
     savedAt: "ignored-by-save",
   };
 
-  it("creates ~/.deeplake with mode 0o700 when missing, then writes creds 0o600", () => {
+  // Unix file-mode bits: asserts the dir is 0o700 and the creds file 0o600.
+  // Windows has no POSIX permission bits (statSync().mode reflects the FAT/NTFS
+  // model), so the mode assertions don't hold there — skipped on Windows.
+  it.skipIf(process.platform === "win32")("creates ~/.deeplake with mode 0o700 when missing, then writes creds 0o600", () => {
     expect(existsSync(configDir())).toBe(false);
     saveCredentials(baseCreds);
 

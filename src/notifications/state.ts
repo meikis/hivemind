@@ -15,7 +15,7 @@
 
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { join, resolve } from "node:path";
+import { join, resolve, relative, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import type { NotificationsState, Notification } from "./types.js";
 import { log as _log } from "../utils/debug.js";
@@ -61,17 +61,55 @@ export function bumpSessionCount(sessionId?: string): number {
   return next;
 }
 
+/**
+ * Defense-in-depth: is `path` inside `home`? Cross-platform — `relative`
+ * handles Windows backslash separators, where a hardcoded `home + "/"` prefix
+ * check never matched (and blocked every write under `C:\Users\<runner>\...`).
+ */
+function _isStatePathInsideHome(path: string, home: string): boolean {
+  const r = resolve(path);
+  const h = resolve(home);
+  if (r === h) return true;
+  const rel = relative(h, r);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
 export function writeState(state: NotificationsState): void {
   const path = statePath();
   const home = resolve(homedir());
-  if (!resolve(path).startsWith(home + "/") && resolve(path) !== home) {
+  if (!_isStatePathInsideHome(path, home)) {
     // Sandbox guard — never write outside the user's HOME.
     throw new Error(`notifications-state write blocked: ${path} is outside ${home}`);
   }
   mkdirSync(join(home, ".deeplake"), { recursive: true, mode: 0o700 });
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
-  renameSync(tmp, path);
+  renameAtomic(tmp, path);
+}
+
+/**
+ * Atomic rename with a Windows-only retry. `renameSync` is atomic on POSIX
+ * but raises EPERM/EBUSY on Windows when the destination is transiently open
+ * (concurrent reader, AV scanner, indexer). POSIX takes the first-try path,
+ * so Linux/macOS behavior is unchanged.
+ */
+function renameAtomic(tmp: string, dest: string): void {
+  const MAX_ATTEMPTS = 10;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      renameSync(tmp, dest);
+      return;
+    } catch (e: unknown) {
+      const code = (e as NodeJS.ErrnoException).code;
+      const retryable = code === "EPERM" || code === "EBUSY" || code === "EACCES";
+      if (!retryable || attempt >= MAX_ATTEMPTS - 1) {
+        try { unlinkSync(tmp); } catch { /* best-effort cleanup */ }
+        throw e;
+      }
+      const until = Date.now() + 10 * (attempt + 1);
+      while (Date.now() < until) { /* short synchronous spin; rename is sync API */ }
+    }
+  }
 }
 
 export function markShown(state: NotificationsState, n: Notification, now: Date = new Date()): NotificationsState {

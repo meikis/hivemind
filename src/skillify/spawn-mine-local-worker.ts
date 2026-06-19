@@ -78,7 +78,11 @@ export function findHivemindLauncher(): HivemindLauncher | null {
   const bundled = findBundledCliPath();
   if (bundled) return { kind: "node-script", path: bundled };
   try {
-    const out = execFileSync("which", ["hivemind"], {
+    // `which` is Unix-only; Windows uses `where`. The bundled-cli path above
+    // is the common case, so this fallback rarely runs — but when it does it
+    // must resolve `hivemind` on the host platform.
+    const lookup = process.platform === "win32" ? "where" : "which";
+    const out = execFileSync(lookup, ["hivemind"], {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "ignore"],
     });

@@ -47,7 +47,9 @@ function writeManifest(home: string, version: string): void {
 function runGcBundle(home: string, bundleInsideHome: string): { stdout: string; stderr: string } {
   try {
     const stdout = execFileSync("node", [bundleInsideHome], {
-      env: { ...process.env, HOME: home, HIVEMIND_DEBUG: "0" },
+      // homedir() reads HOME on POSIX and USERPROFILE on Windows — set both so
+      // the GC bundle resolves the fake cache root on every platform.
+      env: { ...process.env, HOME: home, USERPROFILE: home, HIVEMIND_DEBUG: "0" },
       input: "",
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],

@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { join, sep } from "node:path";
+import { homedir } from "node:os";
+
+// Absolute memory path as the product builds it (src/hooks/memory-path-utils.ts
+// uses join(homedir(), ".deeplake", "memory")). String-concatenating with "/"
+// would not match the native-separator MEMORY_PATH on Windows.
+const ABS_MEMORY = join(homedir(), ".deeplake", "memory");
 
 const bundleDir = join(process.cwd(), "harnesses", "claude-code", "bundle");
 
@@ -253,11 +259,10 @@ describe("pre-tool-use: interpreter reads on memory paths return guidance (never
   // a host `cat` — that decision runs on the real filesystem and would let
   // `python3 ~/.deeplake/memory/../../etc/passwd` read a real file. The agent is
   // told to retry with a supported builtin (which IS routed through the VFS).
-  const { homedir } = require("node:os");
   const interpreterReads = [
     "python3 ~/.deeplake/memory/data.json",
     "python3 $HOME/.deeplake/memory/foo.json",
-    `python3 ${homedir()}/.deeplake/memory/session.json`,
+    `python3 ${join(ABS_MEMORY, "session.json")}`,
     "node ~/.deeplake/memory/locomo_bench/conv_0_session_1.json",
     "perl ~/.deeplake/memory/notes.txt",
     "python3 ~/.deeplake/memory/file.json | head",
@@ -411,8 +416,7 @@ describe("pre-tool-use: path variant handling", () => {
   });
 
   it("handles absolute home path", () => {
-    const home = process.env.HOME || "/home/user";
-    const r = runPreToolUse("Bash", { command: `ls ${home}/.deeplake/memory/` });
+    const r = runPreToolUse("Bash", { command: `ls ${ABS_MEMORY}${sep}` });
     expect(r.empty).toBe(false);
     if (!r.empty) {
       expect(r.decision).toBe("allow");
@@ -436,9 +440,8 @@ describe("pre-tool-use: path variant handling", () => {
 
 describe("pre-tool-use: Write / Edit on memory paths are denied with Bash guidance", () => {
   it("denies Write to an absolute memory path", () => {
-    const { homedir } = require("node:os");
     const r = runPreToolUse("Write", {
-      file_path: `${homedir()}/.deeplake/memory/goal/u/opened/x.md`,
+      file_path: join(ABS_MEMORY, "goal", "u", "opened", "x.md"),
       content: "hello",
     });
     expect(r.empty).toBe(false);

@@ -146,7 +146,7 @@ export function findAgentBin(agent: Agent): string {
   }
 }
 
-function buildArgs(agent: Agent, prompt: string, opts: GateRunOptions): string[] {
+export function buildArgs(agent: Agent, prompt: string, opts: GateRunOptions): string[] {
   switch (agent) {
     case "claude_code":
       return [

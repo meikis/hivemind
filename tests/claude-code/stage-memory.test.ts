@@ -191,7 +191,15 @@ describe("stageSession", () => {
   // Exercise the REAL default runClaude (spawn path) via a fake executable
   // that mimics `claude -p`: it finds the SUMMARY path in the prompt argv and
   // writes the file, then exits 0. No claude fork, fully deterministic.
-  it("default runClaude spawn path writes the summary (fake claude bin)", async () => {
+  //
+  // Skipped on Windows: these two tests spawn a `.mjs` file DIRECTLY as the
+  // claudeBin (relying on the `#!/usr/bin/env node` shebang), which Windows
+  // cannot exec (spawn EFTYPE). The cross-platform `.cmd` shim spawn path —
+  // how the real resolver hands claudeBin to runClaude on Windows — is
+  // covered by tests/claude-code/stage-memory-shell-spawn.test.ts. The
+  // injected-runAgent tests above and the planClaudeSpawn unit tests below
+  // still run on every platform.
+  it.skipIf(process.platform === "win32")("default runClaude spawn path writes the summary (fake claude bin)", async () => {
     const fakeBin = join(dir, "fake-claude.mjs");
     writeFileSync(
       fakeBin,
@@ -214,7 +222,10 @@ process.exit(0);
     expect(readFileSync(join(stagingDir, "claude_code-s1.md"), "utf-8")).toBe("# Session s1\n## What Happened\nfrom fake bin\n");
   });
 
-  it("default runClaude reports failure when the bin exits non-zero", async () => {
+  // Skipped on Windows for the same reason as the test above: spawning a
+  // `.mjs` directly hits EFTYPE. Windows `.cmd`-shim coverage lives in
+  // tests/claude-code/stage-memory-shell-spawn.test.ts.
+  it.skipIf(process.platform === "win32")("default runClaude reports failure when the bin exits non-zero", async () => {
     const fakeBin = join(dir, "fail-claude.mjs");
     writeFileSync(fakeBin, `#!/usr/bin/env node\nprocess.exit(3);\n`);
     chmodSync(fakeBin, 0o755);

@@ -334,7 +334,7 @@ describe("writeNewSkill / mergeSkill reject invalid names", () => {
 
 describe("resolveSkillsRoot", () => {
   it("returns <cwd>/.claude/skills for project install", () => {
-    expect(resolveSkillsRoot("project", "/tmp/foo")).toBe("/tmp/foo/.claude/skills");
+    expect(resolveSkillsRoot("project", "/tmp/foo")).toBe(join("/tmp/foo", ".claude", "skills"));
   });
 
   it("returns ~/.claude/skills for global install", () => {

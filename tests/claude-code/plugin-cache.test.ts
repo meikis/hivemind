@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { chmodSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import { tmpdir, homedir, platform } from "node:os";
 import {
   compareSemverDesc,
@@ -278,7 +278,7 @@ describe("planGc", () => {
   it("keeps an old version when isInUse claims it's still in use", () => {
     mk("0.6.37", "0.6.38", "0.6.39", "0.6.40");
     // 0.6.37 is well below the keep-2 cutoff but a live session claims it.
-    const isInUse = (versionDir: string) => versionDir.endsWith("/0.6.37");
+    const isInUse = (versionDir: string) => basename(versionDir) === "0.6.37";
     const plan = planGc(root, "0.6.40", 2, () => false, isInUse);
     expect(plan.keep).toContain("0.6.37");
     expect(plan.deleteVersions).not.toContain("0.6.37");
@@ -303,7 +303,7 @@ describe("planGc", () => {
     planGc(root, "0.6.40", 2, () => false, isInUse);
     // Only 0.6.37 and 0.6.38 are deletion candidates; 0.6.39 and 0.6.40
     // are auto-kept and must not be queried.
-    expect(calls.map(c => c.split("/").pop())).toEqual(["0.6.37", "0.6.38"]);
+    expect(calls.map(c => basename(c))).toEqual(["0.6.37", "0.6.38"]);
   });
 
   it("default isInUse (real disk) returns false when no .in_use dirs exist", () => {
