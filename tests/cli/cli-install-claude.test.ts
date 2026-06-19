@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 /**
  * Tests for src/cli/install-claude.ts.
@@ -345,12 +346,11 @@ describe("cleanupBrokenSettingsHooks", () => {
   beforeEach(() => {
     TEMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "hivemind-cleanup-test-"));
     ORIGINAL_HOME = process.env.HOME;
-    process.env.HOME = TEMP_HOME;
+    setFakeHome(TEMP_HOME);
     execFileSyncMock.mockReset();
   });
   afterEach(() => {
-    if (ORIGINAL_HOME !== undefined) process.env.HOME = ORIGINAL_HOME;
-    else delete process.env.HOME;
+    clearFakeHome();
     fs.rmSync(TEMP_HOME, { recursive: true, force: true });
   });
 

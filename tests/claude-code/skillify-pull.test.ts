@@ -18,6 +18,7 @@ import {
 } from "../../src/skillify/pull.js";
 import { lstatSync, readlinkSync, symlinkSync } from "node:fs";
 import { loadManifest } from "../../src/skillify/manifest.js";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 let projectRoot: string;
 let projectSkillsRoot: string;
@@ -31,14 +32,13 @@ beforeEach(() => {
   // directory instead of polluting the developer's real ~/.deeplake state.
   fakeHome = mkdtempSync(join(tmpdir(), "skillify-pull-home-"));
   originalHome = process.env.HOME;
-  process.env.HOME = fakeHome;
+  setFakeHome(fakeHome);
 });
 
 afterEach(() => {
   try { rmSync(projectRoot, { recursive: true, force: true }); } catch { /* nothing */ }
   try { rmSync(fakeHome, { recursive: true, force: true }); } catch { /* nothing */ }
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
+  clearFakeHome();
 });
 
 // ── assertValidAuthor ──────────────────────────────────────────────────────

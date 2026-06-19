@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, readFileSync
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { spawn } from "node:child_process";
+import { setFakeHome } from "../shared/fake-home.js";
 
 /**
  * Functional tests for summary-state. The module computes STATE_DIR from
@@ -26,7 +27,7 @@ let mod: typeof import("../../src/hooks/summary-state.js");
 
 beforeAll(async () => {
   tmpHome = mkdtempSync(join(tmpdir(), "summary-state-test-"));
-  process.env.HOME = tmpHome;
+  setFakeHome(tmpHome);
   mod = await import("../../src/hooks/summary-state.js");
 });
 

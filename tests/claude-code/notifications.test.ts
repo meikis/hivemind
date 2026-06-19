@@ -32,6 +32,7 @@ import { readQueue, queuePath } from "../../src/notifications/queue.js";
 import { renderNotifications } from "../../src/notifications/format.js";
 import { localMinedRule } from "../../src/notifications/rules/local-mined.js";
 import type { Credentials } from "../../src/commands/auth-creds.js";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 /**
  * Source-level tests for src/notifications/.
@@ -58,7 +59,7 @@ const FRESH_CREDS: Credentials = {
 beforeEach(() => {
   TEMP_HOME = mkdtempSync(join(tmpdir(), "hivemind-notif-test-"));
   ORIGINAL_HOME = process.env.HOME;
-  process.env.HOME = TEMP_HOME;
+  setFakeHome(TEMP_HOME);
   _resetRulesForTest();
   // Default: server returns null → primary-banner falls back to local jsonl
   // (which is empty in fresh sandbox) → savings == 0 → welcome wins.
@@ -69,7 +70,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.HOME = ORIGINAL_HOME;
+  clearFakeHome();
   rmSync(TEMP_HOME, { recursive: true, force: true });
 });
 
@@ -1079,13 +1080,13 @@ describe("state.tryClaim (per-notification atomic claim)", () => {
     const sentinel = join(TEMP_HOME, "sentinel-file");
     writeFileSync(sentinel, "x", "utf-8");
     const prev = process.env.HOME;
-    process.env.HOME = sentinel;
+    setFakeHome(sentinel);
     try {
       const { tryClaim } = await import("../../src/notifications/state.js");
       const n: Notification = { id: "fail-open-test", dedupKey: { v: 1 }, title: "t", body: "b" };
       expect(tryClaim(n)).toBe(true);
     } finally {
-      process.env.HOME = prev;
+      setFakeHome(prev!);
     }
   });
 

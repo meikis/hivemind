@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { autoUpdate } from "../../src/hooks/shared/autoupdate.js";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 /**
  * Tests for src/hooks/shared/autoupdate.ts — fire-and-forget centralized
@@ -46,11 +47,11 @@ beforeEach(() => {
   TMP_HOME = mkdtempSync(join(tmpdir(), "autoupdate-test-"));
   mkdirSync(join(TMP_HOME, ".deeplake"), { recursive: true });
   ORIGINAL_HOME = process.env.HOME;
-  process.env.HOME = TMP_HOME;
+  setFakeHome(TMP_HOME);
 });
 
 afterEach(() => {
-  process.env.HOME = ORIGINAL_HOME;
+  clearFakeHome();
   rmSync(TMP_HOME, { recursive: true, force: true });
   vi.restoreAllMocks();
 });

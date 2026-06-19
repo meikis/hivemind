@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 /**
  * End-to-end tests for the install/uninstall surface of every per-agent
@@ -37,7 +38,7 @@ let originalHome: string | undefined;
 beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), "hm-e2e-"));
   originalHome = process.env.HOME;
-  process.env.HOME = fakeHome;
+  setFakeHome(fakeHome);
   // Touch marker dirs so detectPlatforms() recognises each agent.
   for (const d of [".claude", ".codex", ".openclaw", ".cursor", ".hermes", ".pi"]) {
     mkdirSync(join(fakeHome, d), { recursive: true });
@@ -48,7 +49,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.HOME = originalHome;
+  clearFakeHome();
   rmSync(fakeHome, { recursive: true, force: true });
 });
 

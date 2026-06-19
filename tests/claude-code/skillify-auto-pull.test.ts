@@ -33,6 +33,7 @@ vi.mock("../../src/deeplake-api.js", () => ({
 import { autoPullSkills } from "../../src/skillify/auto-pull.js";
 import type { QueryFn } from "../../src/skillify/pull.js";
 import type { Config } from "../../src/config.js";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 // ─── Test harness ──────────────────────────────────────────────────────────────
 // We pin HOME to a per-test temp dir so any file writes land in the sandbox
@@ -44,14 +45,14 @@ const realHome = process.env.HOME;
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), "autopull-"));
-  process.env.HOME = tmpHome;
+  setFakeHome(tmpHome);
   delete process.env.HIVEMIND_AUTOPULL_DISABLED;
   apiQueryMock.mockReset();
   apiKnownTablesMock.mockReset().mockResolvedValue(null);
 });
 
 afterEach(() => {
-  process.env.HOME = realHome;
+  clearFakeHome();
   delete process.env.HIVEMIND_AUTOPULL_DISABLED;
   try { rmSync(tmpHome, { recursive: true, force: true }); } catch { /* nothing */ }
 });

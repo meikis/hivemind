@@ -25,6 +25,7 @@ vi.mock("../../src/deeplake-api.js", () => ({
 }));
 
 import { runSkillifyCommand } from "../../src/commands/skillify.js";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 import { loadConfig } from "../../src/config.js";
 const loadConfigMock = loadConfig as unknown as ReturnType<typeof vi.fn>;
 
@@ -98,7 +99,7 @@ describe("status (default subcommand)", () => {
     // below would JSON.parse the wrong shape and silently swallow the error.
     const stateHome = mkdtempSync(join(tmpdir(), "skillify-cli-status-"));
     const prevHome = process.env.HOME;
-    process.env.HOME = stateHome;
+    setFakeHome(stateHome);
     try {
       const stateDir = join(stateHome, ".deeplake", "state", "skillify");
       mkdirSync(stateDir, { recursive: true });
@@ -110,8 +111,7 @@ describe("status (default subcommand)", () => {
       expect(out).toMatch(/state: \(no projects tracked yet\)/);
       expect(out).not.toMatch(/project\(s\) tracked/);
     } finally {
-      if (prevHome === undefined) delete process.env.HOME;
-      else process.env.HOME = prevHome;
+      clearFakeHome();
       rmSync(stateHome, { recursive: true, force: true });
     }
   });
@@ -291,12 +291,11 @@ describe("unpull", () => {
   beforeEach(() => {
     unpullHome = mkdtempSync(join(tmpdir(), "skillify-cli-unpull-home-"));
     originalHome = process.env.HOME;
-    process.env.HOME = unpullHome;
+    setFakeHome(unpullHome);
   });
   afterEach(() => {
     try { rmSync(unpullHome, { recursive: true, force: true }); } catch { /* nothing */ }
-    if (originalHome === undefined) delete process.env.HOME;
-    else process.env.HOME = originalHome;
+    clearFakeHome();
   });
 
   it("--dry-run on empty manifest reports zero work", () => {

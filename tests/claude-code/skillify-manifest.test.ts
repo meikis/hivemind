@@ -16,6 +16,7 @@ import {
   unlinkSymlinks,
   type PulledEntry,
 } from "../../src/skillify/manifest.js";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 let fakeHome: string;
 let originalHome: string | undefined;
@@ -23,13 +24,12 @@ let originalHome: string | undefined;
 beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), "skillify-manifest-"));
   originalHome = process.env.HOME;
-  process.env.HOME = fakeHome;
+  setFakeHome(fakeHome);
 });
 
 afterEach(() => {
   try { rmSync(fakeHome, { recursive: true, force: true }); } catch { /* nothing */ }
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
+  clearFakeHome();
 });
 
 const sampleEntry = (over: Partial<PulledEntry> = {}): PulledEntry => ({

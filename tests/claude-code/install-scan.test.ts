@@ -91,6 +91,7 @@ import {
   formatScanResult,
   runInstallScan,
 } from "../../src/cli/install-scan.js";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 const TMP_HOME = mkdtempSync(join(tmpdir(), "install-scan-test-"));
 const originalHome = process.env.HOME;
@@ -111,7 +112,7 @@ beforeEach(() => {
   // Each test starts with a clean tmp HOME: no sessions, no manifest.
   rmSync(TMP_HOME, { recursive: true, force: true });
   mkdirSync(TMP_HOME, { recursive: true });
-  process.env.HOME = TMP_HOME;
+  setFakeHome(TMP_HOME);
   // process.argv[1] is what runInstallScan spawns. Point it at a real
   // file so the existsSync check passes; the actual content doesn't
   // matter because spawn is mocked.
@@ -122,7 +123,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  process.env.HOME = originalHome;
+  clearFakeHome();
   process.argv[1] = originalArgv1;
   try { rmSync(FAKE_BIN); } catch { /* best-effort */ }
 });

@@ -21,6 +21,7 @@ import {
   bundleDirFromImportMeta as hermesBundleDir,
 } from "../../src/hooks/hermes/spawn-wiki-worker.js";
 import type { Config } from "../../src/config.js";
+import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
 
 /**
  * Per-agent guard for the spawn-wiki-worker helpers.
@@ -85,12 +86,11 @@ beforeEach(() => {
   fakeHome = join(scratchRoot, "home");
   mkdirSync(fakeHome, { recursive: true });
   originalHome = process.env.HOME;
-  process.env.HOME = fakeHome;
+  setFakeHome(fakeHome);
 });
 
 afterEach(() => {
-  if (originalHome === undefined) delete process.env.HOME;
-  else process.env.HOME = originalHome;
+  clearFakeHome();
   rmSync(scratchRoot, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
