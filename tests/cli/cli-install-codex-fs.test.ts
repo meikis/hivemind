@@ -386,7 +386,64 @@ describe("installCodex — happy path", () => {
   });
 });
 
+const BEGIN = "<!-- BEGIN hivemind-memory -->";
+const END = "<!-- END hivemind-memory -->";
+
+describe("installCodex — AGENTS.md memory block", () => {
+  const agentsPath = (): string => join(tmpHome, ".codex", "AGENTS.md");
+
+  it("creates ~/.codex/AGENTS.md with exactly one hivemind block carrying the proactive instruction", async () => {
+    const { installCodex } = await importInstaller();
+    installCodex();
+    const md = readFileSync(agentsPath(), "utf-8");
+    expect((md.match(new RegExp(BEGIN, "g")) ?? []).length).toBe(1);
+    expect(md).toContain(END);
+    // The whole point: proactive memory + rules/goals guidance is injected
+    // here (silent model context), not in the user-visible session-start hook.
+    expect(md).toContain("Proactively consult");
+    expect(md).toContain("hivemind rules list");
+    expect(md).toContain("hivemind goal list --mine");
+  });
+
+  it("preserves a user's pre-existing AGENTS.md content; appends the block once", async () => {
+    writeFileSync(agentsPath(), "# My Codex notes\nUser content here.\n");
+    const { installCodex } = await importInstaller();
+    installCodex();
+    const md = readFileSync(agentsPath(), "utf-8");
+    expect(md).toContain("# My Codex notes");
+    expect(md).toContain("User content here.");
+    expect((md.match(new RegExp(BEGIN, "g")) ?? []).length).toBe(1);
+  });
+
+  it("is idempotent: re-running installCodex 5x leaves exactly one block", async () => {
+    const { installCodex } = await importInstaller();
+    for (let i = 0; i < 5; i++) installCodex();
+    const md = readFileSync(agentsPath(), "utf-8");
+    expect((md.match(new RegExp(BEGIN, "g")) ?? []).length).toBe(1);
+    expect((md.match(new RegExp(END, "g")) ?? []).length).toBe(1);
+  });
+});
+
 describe("uninstallCodex", () => {
+  it("strips the hivemind block from AGENTS.md while preserving user content", async () => {
+    const agentsPath = join(tmpHome, ".codex", "AGENTS.md");
+    writeFileSync(agentsPath, `# Header\nuser line\n\n${BEGIN}\nstale\n${END}\n\n## After\nmore user\n`);
+    const { uninstallCodex } = await importInstaller();
+    uninstallCodex();
+    const md = readFileSync(agentsPath, "utf-8");
+    expect(md).not.toContain(BEGIN);
+    expect(md).toContain("# Header");
+    expect(md).toContain("more user");
+  });
+
+  it("removes AGENTS.md entirely when only our block existed", async () => {
+    const { installCodex, uninstallCodex } = await importInstaller();
+    installCodex();
+    expect(existsSync(join(tmpHome, ".codex", "AGENTS.md"))).toBe(true);
+    uninstallCodex();
+    expect(existsSync(join(tmpHome, ".codex", "AGENTS.md"))).toBe(false);
+  });
+
   it("removes hooks.json and the agentskills symlink, but keeps the plugin payload", async () => {
     const { installCodex, uninstallCodex } = await importInstaller();
     installCodex();

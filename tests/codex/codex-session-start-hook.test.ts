@@ -122,6 +122,18 @@ describe("codex session-start hook — guards", () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain("workspace: default");
   });
 
+  it("keeps additionalContext minimal — no rules/goals block (that lives in AGENTS.md)", async () => {
+    const out = await runHook();
+    const parsed = JSON.parse(out!.trim());
+    const ctx = parsed.hookSpecificOutput.additionalContext;
+    // Codex has no model-only channel: additionalContext is user-visible, so
+    // the proactive memory instruction lives in the silent ~/.codex/AGENTS.md
+    // block (install-codex.ts), not here. Guard against regressing to an
+    // in-context block that would clobber the TUI.
+    expect(ctx).not.toContain("hivemind rules list");
+    expect(ctx).not.toContain("Team memory is active");
+  });
+
   it("falls back to orgId when orgName is missing", async () => {
     loadCredsMock.mockReturnValue({
       token: "tok", orgId: "org-uuid-123", userName: "alice", workspaceId: "staging",
