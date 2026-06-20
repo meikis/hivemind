@@ -30,14 +30,21 @@ export function upsertMarkedBlock(
   if (!existing) return `${block}\n`;
   const startIdx = existing.indexOf(start);
   if (startIdx === -1) return `${existing.trimEnd()}\n\n${block}\n`;
+  const endIdx = existing.indexOf(end, startIdx);
   // Malformed prior block (a BEGIN with no END anywhere) — don't risk
-  // truncating user content; append a fresh block and let the user clean up.
-  if (existing.indexOf(end, startIdx) === -1) return `${existing.trimEnd()}\n\n${block}\n`;
-  // Strip every existing block (handles duplicates from a bad merge / manual
-  // paste), then re-append exactly one — guaranteeing the "single block"
-  // contract is idempotent even for already-duplicated files.
-  const cleaned = stripMarkedBlock(existing, start, end).trimEnd();
-  return cleaned ? `${cleaned}\n\n${block}\n` : `${block}\n`;
+  // truncating user content; append a fresh block. stripMarkedBlock can still
+  // remove it later (it scans past the malformed marker for well-formed pairs).
+  if (endIdx === -1) return `${existing.trimEnd()}\n\n${block}\n`;
+  // Replace the FIRST block IN PLACE — keeping its position relative to the
+  // user's own notes so their overrides keep their precedence — and strip any
+  // DUPLICATE blocks from the tail (bad merge / manual paste collapse to one).
+  const before = existing.slice(0, startIdx).trimEnd();
+  const after = stripMarkedBlock(existing.slice(endIdx + end.length), start, end)
+    .replace(/^\n+/, "")
+    .trimEnd();
+  const head = before ? `${before}\n\n` : "";
+  const tail = after ? `\n\n${after}` : "";
+  return `${head}${block}${tail}\n`;
 }
 
 /**
@@ -56,6 +63,9 @@ export function stripMarkedBlock(
     const startIdx = text.indexOf(start);
     if (startIdx === -1) return text;
     const endIdx = text.indexOf(end, startIdx);
+    // A BEGIN with no END after it — stop here, leaving the remainder intact so
+    // a user's half-written marker (and any text under it) is never truncated.
+    // Well-formed blocks earlier in the file have already been removed by now.
     if (endIdx === -1) return text;
     const before = text.slice(0, startIdx).trimEnd();
     const after = text.slice(endIdx + end.length).replace(/^\n+/, "");

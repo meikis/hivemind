@@ -329,6 +329,16 @@ describe("upsertHivemindBlock", () => {
     expect(out).not.toContain("second");
     expect(stripHivemindBlock(out)).toBe("# Header\n\n## Mid\n\n## Tail\n");
   });
+
+  it("keeps the block IN PLACE on reinstall — does not relocate it below later user notes", () => {
+    const prior = `# Top\n\n${BEGIN}\nold\n${END}\n\n## My overrides\nkeep last`;
+    const out = upsertHivemindBlock(prior);
+    // Block stays between "# Top" and the user's overrides (precedence kept),
+    // not appended at EOF.
+    expect(out.indexOf(BEGIN)).toBeLessThan(out.indexOf("## My overrides"));
+    expect(out.endsWith("## My overrides\nkeep last\n")).toBe(true);
+    expect((out.match(new RegExp(BEGIN, "g")) ?? []).length).toBe(1);
+  });
 });
 
 describe("stripHivemindBlock", () => {
