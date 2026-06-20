@@ -28,18 +28,16 @@ export function upsertMarkedBlock(
   end: string = HIVEMIND_BLOCK_END,
 ): string {
   if (!existing) return `${block}\n`;
-  const startIdx = existing.indexOf(start);
-  if (startIdx === -1) return `${existing.trimEnd()}\n\n${block}\n`;
-  const endIdx = existing.indexOf(end, startIdx);
-  // Malformed prior block (a BEGIN with no END anywhere) — don't risk
-  // truncating user content; append a fresh block. stripMarkedBlock can still
-  // remove it later (it scans past the malformed marker for well-formed pairs).
-  if (endIdx === -1) return `${existing.trimEnd()}\n\n${block}\n`;
-  // Replace the FIRST block IN PLACE — keeping its position relative to the
-  // user's own notes so their overrides keep their precedence — and strip any
+  const first = findFirstBlock(existing, start, end);
+  // No well-formed block (none at all, or only a stray/unclosed BEGIN) — append
+  // a fresh one. We never pair a stray BEGIN with our block's END, so user text
+  // under a half-written marker is preserved.
+  if (!first) return `${existing.trimEnd()}\n\n${block}\n`;
+  // Replace the first WELL-FORMED block IN PLACE — keeping its position relative
+  // to the user's own notes so their overrides keep precedence — and strip any
   // DUPLICATE blocks from the tail (bad merge / manual paste collapse to one).
-  const before = existing.slice(0, startIdx).trimEnd();
-  const after = stripMarkedBlock(existing.slice(endIdx + end.length), start, end)
+  const before = existing.slice(0, first.startIdx).trimEnd();
+  const after = stripMarkedBlock(existing.slice(first.endIdx + end.length), start, end)
     .replace(/^\n+/, "")
     .trimEnd();
   const head = before ? `${before}\n\n` : "";
@@ -49,9 +47,9 @@ export function upsertMarkedBlock(
 
 /**
  * Remove EVERY hivemind block from `existing`, preserving surrounding content.
- * Loops so duplicate marker pairs are all removed; stops at a malformed
- * (BEGIN-without-END) block and leaves the remainder untouched so user data
- * after a half-written marker is never truncated.
+ * Loops so duplicate marker pairs are all removed; skips stray/unclosed BEGIN
+ * markers (never pairing them with a later block's END) so user data under a
+ * half-written marker is never truncated.
  */
 export function stripMarkedBlock(
   existing: string,
@@ -59,30 +57,41 @@ export function stripMarkedBlock(
   end: string = HIVEMIND_BLOCK_END,
 ): string {
   let text = existing;
-  let searchFrom = 0;
   for (;;) {
-    const startIdx = text.indexOf(start, searchFrom);
-    if (startIdx === -1) return text;
-    const endIdx = text.indexOf(end, startIdx);
-    // A BEGIN with no END anywhere after it — leave the remainder intact so a
-    // user's half-written marker (and the text under it) is never truncated.
-    if (endIdx === -1) return text;
-    // A stray/unclosed BEGIN: another BEGIN appears before this one's END, so
-    // this END actually belongs to a *later* block. Pairing them would delete
-    // the user's content in between (data loss). Skip this BEGIN and resume the
-    // scan after it — only well-formed BEGIN..END pairs (no intervening BEGIN)
-    // are removed.
-    const nextStart = text.indexOf(start, startIdx + start.length);
-    if (nextStart !== -1 && nextStart < endIdx) {
-      searchFrom = startIdx + start.length;
-      continue;
-    }
-    const before = text.slice(0, startIdx).trimEnd();
-    const after = text.slice(endIdx + end.length).replace(/^\n+/, "");
+    const block = findFirstBlock(text, start, end);
+    if (!block) return text;
+    const before = text.slice(0, block.startIdx).trimEnd();
+    const after = text.slice(block.endIdx + end.length).replace(/^\n+/, "");
     if (!before && !after) text = "";
     else if (!before) text = after;
     else if (!after) text = `${before}\n`;
     else text = `${before}\n\n${after}`;
-    searchFrom = 0; // text shifted — rescan from the top
+  }
+}
+
+/**
+ * Locate the first WELL-FORMED block: a BEGIN whose matching END has no other
+ * BEGIN before it. Stray/unclosed BEGIN markers (another BEGIN appears before
+ * the next END, or there is no END at all) are skipped so they're never paired
+ * with a later block's END — the shared guard both upsert and strip rely on to
+ * avoid deleting user content between a stray marker and our block.
+ */
+function findFirstBlock(
+  text: string,
+  start: string,
+  end: string,
+): { startIdx: number; endIdx: number } | null {
+  let from = 0;
+  for (;;) {
+    const startIdx = text.indexOf(start, from);
+    if (startIdx === -1) return null;
+    const endIdx = text.indexOf(end, startIdx);
+    if (endIdx === -1) return null;
+    const nextStart = text.indexOf(start, startIdx + start.length);
+    if (nextStart !== -1 && nextStart < endIdx) {
+      from = startIdx + start.length;
+      continue;
+    }
+    return { startIdx, endIdx };
   }
 }

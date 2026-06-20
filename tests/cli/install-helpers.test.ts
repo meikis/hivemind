@@ -330,6 +330,17 @@ describe("upsertHivemindBlock", () => {
     expect(stripHivemindBlock(out)).toBe("# Header\n\n## Mid\n\n## Tail\n");
   });
 
+  it("on reinstall, does NOT delete user text under a preexisting stray BEGIN (data-loss guard)", () => {
+    // A file that already has a stray BEGIN followed by our block (e.g. a prior
+    // install over a half-written marker). Reinstall must replace OUR block in
+    // place without swallowing the user's text under the stray marker.
+    const prior = `# Notes\n${BEGIN}\nuser text under stray marker\n\n${BEGIN}\nold block\n${END}\n`;
+    const out = upsertHivemindBlock(prior);
+    expect(out).toContain("user text under stray marker"); // preserved
+    expect(out).not.toContain("old block"); // our block replaced
+    expect((out.match(new RegExp(END, "g")) ?? []).length).toBe(1); // one well-formed block
+  });
+
   it("keeps the block IN PLACE on reinstall — does not relocate it below later user notes", () => {
     const prior = `# Top\n\n${BEGIN}\nold\n${END}\n\n## My overrides\nkeep last`;
     const out = upsertHivemindBlock(prior);
