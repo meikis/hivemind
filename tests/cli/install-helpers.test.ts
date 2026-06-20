@@ -317,6 +317,19 @@ describe("upsertHivemindBlock", () => {
     // And there's a complete marker pair somewhere.
     expect(out).toContain(END);
   });
+
+  it("collapses DUPLICATE blocks (bad merge / manual paste) down to exactly one", () => {
+    const prior = `# Header\n\n${BEGIN}\nfirst\n${END}\n\n## Mid\n\n${BEGIN}\nsecond\n${END}\n\n## Tail`;
+    const out = upsertHivemindBlock(prior);
+    expect((out.match(new RegExp(BEGIN, "g")) ?? []).length).toBe(1);
+    expect((out.match(new RegExp(END, "g")) ?? []).length).toBe(1);
+    // Both stale bodies gone; surrounding user content preserved.
+    expect(out).not.toContain("first");
+    expect(out).not.toContain("second");
+    expect(out).toContain("# Header");
+    expect(out).toContain("## Mid");
+    expect(out).toContain("## Tail");
+  });
 });
 
 describe("stripHivemindBlock", () => {
@@ -352,6 +365,18 @@ describe("stripHivemindBlock", () => {
   it("malformed (BEGIN without END) → input returned unchanged (don't truncate user data)", () => {
     const prior = `# Header\n${BEGIN}\nbroken — no end marker\nuser stuff after\n`;
     expect(stripHivemindBlock(prior)).toBe(prior);
+  });
+
+  it("removes EVERY block when the file has duplicate marker pairs", () => {
+    const prior = `# Before\n\n${BEGIN}\none\n${END}\n\n## Mid\n\n${BEGIN}\ntwo\n${END}\n\n## After\n`;
+    const out = stripHivemindBlock(prior);
+    expect(out).not.toContain(BEGIN);
+    expect(out).not.toContain(END);
+    expect(out).not.toContain("one");
+    expect(out).not.toContain("two");
+    expect(out).toContain("# Before");
+    expect(out).toContain("## Mid");
+    expect(out).toContain("## After");
   });
 });
 
