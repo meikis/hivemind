@@ -323,12 +323,11 @@ describe("upsertHivemindBlock", () => {
     const out = upsertHivemindBlock(prior);
     expect((out.match(new RegExp(BEGIN, "g")) ?? []).length).toBe(1);
     expect((out.match(new RegExp(END, "g")) ?? []).length).toBe(1);
-    // Both stale bodies gone; surrounding user content preserved.
+    // Both stale bodies gone; the surviving scaffold is exactly the user's
+    // content with a single block (asserted via strip → exact remainder).
     expect(out).not.toContain("first");
     expect(out).not.toContain("second");
-    expect(out).toContain("# Header");
-    expect(out).toContain("## Mid");
-    expect(out).toContain("## Tail");
+    expect(stripHivemindBlock(out)).toBe("# Header\n\n## Mid\n\n## Tail\n");
   });
 });
 
@@ -370,13 +369,8 @@ describe("stripHivemindBlock", () => {
   it("removes EVERY block when the file has duplicate marker pairs", () => {
     const prior = `# Before\n\n${BEGIN}\none\n${END}\n\n## Mid\n\n${BEGIN}\ntwo\n${END}\n\n## After\n`;
     const out = stripHivemindBlock(prior);
-    expect(out).not.toContain(BEGIN);
-    expect(out).not.toContain(END);
-    expect(out).not.toContain("one");
-    expect(out).not.toContain("two");
-    expect(out).toContain("# Before");
-    expect(out).toContain("## Mid");
-    expect(out).toContain("## After");
+    // Exact remainder: both blocks removed, user scaffold intact.
+    expect(out).toBe("# Before\n\n## Mid\n\n## After\n");
   });
 });
 
