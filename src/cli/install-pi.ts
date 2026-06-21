@@ -2,6 +2,12 @@ import { existsSync, writeFileSync, rmSync, readFileSync, copyFileSync } from "n
 import { join } from "node:path";
 import { HOME, pkgRoot, ensureDir, writeVersionStamp, log } from "./util.js";
 import { getVersion } from "./version.js";
+import {
+  upsertMarkedBlock,
+  stripMarkedBlock,
+  HIVEMIND_BLOCK_START,
+  HIVEMIND_BLOCK_END,
+} from "./agents-md.js";
 
 // pi (badlogic/pi-mono `packages/coding-agent`) integration — Tier 1.
 //
@@ -53,9 +59,6 @@ const AUTOPULL_WORKER_PATH = join(WIKI_WORKER_DIR, "autopull-worker.js");
 // can't import the raw-.ts trigger so it shells this bundle. Sibling of the others.
 const SKILLOPT_WORKER_PATH = join(WIKI_WORKER_DIR, "skillopt-worker.js");
 
-const HIVEMIND_BLOCK_START = "<!-- BEGIN hivemind-memory -->";
-const HIVEMIND_BLOCK_END = "<!-- END hivemind-memory -->";
-
 const HIVEMIND_BLOCK_BODY = `${HIVEMIND_BLOCK_START}
 ## Hivemind Memory
 
@@ -75,33 +78,11 @@ rg/ripgrep, node, python, curl are not available there.
 ${HIVEMIND_BLOCK_END}`;
 
 export function upsertHivemindBlock(existing: string | null): string {
-  const block = HIVEMIND_BLOCK_BODY;
-  if (!existing) return `${block}\n`;
-  // Strip any pre-existing hivemind block, then re-append.
-  const startIdx = existing.indexOf(HIVEMIND_BLOCK_START);
-  if (startIdx === -1) return `${existing.trimEnd()}\n\n${block}\n`;
-  const endIdx = existing.indexOf(HIVEMIND_BLOCK_END, startIdx);
-  if (endIdx === -1) {
-    // Malformed prior block — append fresh and let the user clean up.
-    return `${existing.trimEnd()}\n\n${block}\n`;
-  }
-  const before = existing.slice(0, startIdx).trimEnd();
-  const after = existing.slice(endIdx + HIVEMIND_BLOCK_END.length).replace(/^\n+/, "");
-  const rest = after ? `\n\n${after}` : "";
-  return `${before ? before + "\n\n" : ""}${block}\n${rest}`;
+  return upsertMarkedBlock(existing, HIVEMIND_BLOCK_BODY);
 }
 
 export function stripHivemindBlock(existing: string): string {
-  const startIdx = existing.indexOf(HIVEMIND_BLOCK_START);
-  if (startIdx === -1) return existing;
-  const endIdx = existing.indexOf(HIVEMIND_BLOCK_END, startIdx);
-  if (endIdx === -1) return existing;
-  const before = existing.slice(0, startIdx).trimEnd();
-  const after = existing.slice(endIdx + HIVEMIND_BLOCK_END.length).replace(/^\n+/, "");
-  if (!before && !after) return "";
-  if (!before) return after;
-  if (!after) return `${before}\n`;
-  return `${before}\n\n${after}`;
+  return stripMarkedBlock(existing);
 }
 
 export function installPi(): void {

@@ -122,6 +122,20 @@ describe("codex session-start hook — guards", () => {
     expect(parsed.hookSpecificOutput.additionalContext).toContain("workspace: default");
   });
 
+  it("keeps additionalContext minimal — login line only, no rules/goals block (that lives in AGENTS.md)", async () => {
+    const out = await runHook();
+    const parsed = JSON.parse(out!.trim());
+    const ctx = parsed.hookSpecificOutput.additionalContext;
+    // Codex has no model-only channel: additionalContext is user-visible, so
+    // the proactive memory instruction lives in the silent ~/.codex/AGENTS.md
+    // block (install-codex.ts), not here. Assert the EXACT logged-in context
+    // (login line + optional version notice) so any leaked block — or extra
+    // line that would clobber the TUI — fails the test.
+    expect(ctx).toMatch(
+      /^Hivemind: logged in as org acme \(workspace: default\)\.(\nHivemind v.+)?$/,
+    );
+  });
+
   it("falls back to orgId when orgName is missing", async () => {
     loadCredsMock.mockReturnValue({
       token: "tok", orgId: "org-uuid-123", userName: "alice", workspaceId: "staging",
