@@ -44,26 +44,33 @@ export interface Credentials {
 // safety. Letting the fs call's own error fall into a try/catch is more
 // correct AND simplifies coverage to a single fall-through path.
 
-export function loadCredentials(): Credentials | null {
-  // Read up to twice. A genuinely-absent file (ENOENT) is final → null with no
-  // retry. But a JSON.parse failure can be a TRANSIENT torn read: another
-  // process rewriting credentials.json at the same instant. saveCredentials()
-  // now writes atomically (temp + rename), so this version can't tear its own
-  // writes — but an older plugin build sharing this machine still might, and a
-  // crashed writer can leave a half-file. One immediate re-read recovers from
-  // that window instead of falsely reporting "not logged in" for the session.
-  for (let attempt = 0; attempt < 2; attempt++) {
+// `readFile` is injectable purely for tests — it lets the retry path below be
+// exercised deterministically (first call throws, second succeeds) without
+// mocking node:fs at the module level, which this file avoids (see the header
+// note on the coverage-flake that mock+reimport caused). Production callers use
+// the default and never pass an argument.
+export function loadCredentials(
+  readFile: (p: string) => string = (p) => readFileSync(p, "utf-8"),
+): Credentials | null {
+  try {
+    return JSON.parse(readFile(credsPath()));
+  } catch (err) {
+    // A genuinely-absent file (ENOENT) is final → null, no retry.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return null;
+    // Otherwise the failure may be a TRANSIENT torn read: another process
+    // rewriting credentials.json at this instant. saveCredentials() now writes
+    // atomically (temp + rename) so this version can't tear its own writes, but
+    // an older plugin build on the same machine still might, and a crashed
+    // writer can leave a half-file. Re-read once before declaring "not logged
+    // in" for the whole session.
     try {
-      return JSON.parse(readFileSync(credsPath(), "utf-8"));
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return null;
-      if (attempt === 0) continue;
-      // Persistent permission error or malformed JSON — treat as "no usable
+      return JSON.parse(readFile(credsPath()));
+    } catch {
+      // Persistent permission error or malformed JSON → "no usable
       // credentials." Caller treats null as "not logged in."
       return null;
     }
   }
-  return null;
 }
 
 export function saveCredentials(creds: Credentials): void {

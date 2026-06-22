@@ -95,6 +95,26 @@ describe("loadCredentials", () => {
     writeFileSync(`${credsPath()}.999999.deadbeef.tmp`, "{ partial");
     expect(loadCredentials()).toMatchObject({ token: "tok", orgId: "org" });
   });
+
+  it("recovers a transient torn read by re-reading once (retry path)", () => {
+    saveCredentials({ token: "tok", orgId: "org", savedAt: "" });
+    let calls = 0;
+    // First read sees a half-written file (mid-rewrite by another process);
+    // the immediate re-read sees the complete file. Inject the reader so the
+    // race is deterministic without mocking node:fs.
+    const flaky = (p: string) => {
+      calls += 1;
+      if (calls === 1) return "{ truncated";          // torn read → JSON.parse throws
+      return readFileSync(p, "utf-8");                  // settled file
+    };
+    expect(loadCredentials(flaky)).toMatchObject({ token: "tok", orgId: "org" });
+    expect(calls).toBe(2);
+  });
+
+  it("returns null when both reads fail (persistent malformed)", () => {
+    const alwaysBad = () => "{ still broken";
+    expect(loadCredentials(alwaysBad)).toBeNull();
+  });
 });
 
 describe("saveCredentials", () => {
@@ -141,6 +161,16 @@ describe("saveCredentials", () => {
     expect(leftovers).toEqual([]);
     // and the committed file is complete, valid JSON
     expect(() => JSON.parse(readFileSync(credsPath(), "utf-8"))).not.toThrow();
+  });
+
+  it.skipIf(process.platform === "win32")("cleans up the temp file and rethrows when the commit fails", () => {
+    // Force renameSync to fail by making credentials.json an existing
+    // directory (rename of a file onto a dir → EISDIR). The staging temp must
+    // be unlinked and the error rethrown — no partial state, no leaked tmp.
+    mkdirSync(credsPath(), { recursive: true, mode: 0o700 });
+    expect(() => saveCredentials(baseCreds)).toThrow();
+    const leftovers = readdirSync(configDir()).filter(f => f.endsWith(".tmp"));
+    expect(leftovers).toEqual([]);
   });
 
   it("repeated rewrites never leave a partial/unreadable credentials.json", () => {
