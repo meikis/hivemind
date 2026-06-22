@@ -3,11 +3,19 @@
 /**
  * Codex PreToolUse hook — intercepts Bash commands targeting ~/.deeplake/memory/.
  *
- * Strategy: "block + inject"
- * Codex does not parse JSON hook output here, so the CLI wrapper still maps:
- * - action=pass  -> exit 0, no output
- * - action=guide -> stdout guidance, exit 0
- * - action=block -> stderr content, exit 2
+ * Decision -> wire mapping. Codex >= 0.136 parses PreToolUse JSON on stdout
+ * (verified against codex-rs/hooks/src/events/pre_tool_use.rs, tag rust-v0.136.0):
+ * - action=pass  -> exit 0, no output                (Codex runs the original command)
+ * - action=block -> stderr content, exit 2           (Codex blocks; reason -> model)
+ * - action=allow -> exit 0, stdout JSON carrying
+ *     hookSpecificOutput.permissionDecision="allow" + updatedInput.command
+ *                                                    (Codex runs the REPLACEMENT command)
+ *
+ * `allow` exists for memory writes: the hook performs the VFS/SQL write itself,
+ * then rewrites the host command to a harmless echo so Codex does NOT re-run the
+ * original redirect. A plain exit-0 with no JSON makes Codex run the original
+ * `echo ... > ~/.deeplake/memory/...` against the on-disk mount — the double
+ * execution that errors "No such file or directory" when the subdir is absent (F3).
  *
  * The source logic is exported so tests can exercise it directly without
  * spawning the bundled script in a subprocess.
@@ -56,9 +64,17 @@ export interface CodexPreToolUseInput {
 }
 
 export interface CodexPreToolDecision {
-  action: "pass" | "guide" | "block";
+  action: "pass" | "block" | "allow";
   output?: string;
   rewrittenCommand?: string;
+  /**
+   * Host command Codex should run INSTEAD of the original, delivered via the
+   * PreToolUse `updatedInput.command` rewrite. Set only for action="allow"
+   * (memory writes the hook has already persisted to the VFS). Running a
+   * harmless echo here stops the original redirect from double-executing
+   * against the on-disk mount.
+   */
+  replacementCommand?: string;
 }
 
 export function buildUnsupportedGuidance(): string {
@@ -91,6 +107,7 @@ interface CodexPreToolDeps {
   handleGrepDirectFn?: typeof handleGrepDirect;
   readCachedIndexContentFn?: typeof readCachedIndexContent;
   writeCachedIndexContentFn?: typeof writeCachedIndexContent;
+  runVfsShellFn?: (command: string) => { status: number | null; stdout: string };
   logFn?: (msg: string) => void;
 }
 
@@ -115,6 +132,14 @@ export async function processCodexPreToolUse(
     handleGrepDirectFn = handleGrepDirect,
     readCachedIndexContentFn = readCachedIndexContent,
     writeCachedIndexContentFn = writeCachedIndexContent,
+    runVfsShellFn = (command: string) => {
+      const shellBundle = join(__bundleDir, "shell", "deeplake-shell.js");
+      const proc = spawnSync("node", [shellBundle, "-c", command], {
+        encoding: "utf-8",
+        timeout: 10_000,
+      });
+      return { status: proc.status, stdout: proc.stdout ?? "" };
+    },
     logFn = log,
   } = deps;
 
@@ -135,7 +160,7 @@ export async function processCodexPreToolUse(
   }
 
   if (!isSafe(rewritten)) {
-    // BLOCK (exit 2), not "guide" (exit 0). guide lets Codex run the original
+    // BLOCK (exit 2), never exit 0. Any exit-0 path lets Codex run the original
     // command on the host, so an unsafe memory command — `python … x.py`,
     // backticks, `$()`, `curl` — would still execute and could read/run real
     // files. Block stops it and injects the guidance instead.
@@ -357,33 +382,34 @@ export async function processCodexPreToolUse(
 
   // Nothing matched by the inline fast-path. Route through the VFS shell bundle
   // — a sandboxed Node.js interpreter against the SQL backend, no host access.
-  // We run it synchronously here (spawnSync) so the output is available before
-  // returning the decision.
+  // We run it synchronously here so the output is available before returning the
+  // decision; the write has already landed in the cloud `memory` table by then.
   //
   // Action choice:
-  //   "guide" (exit 0) — Codex treats the command as successful and also runs
-  //     the original on the host. Safe ONLY for write-redirect patterns
-  //     (echo/printf/tee … > /file) where the side-effect on the real
-  //     ~/.deeplake/memory/ disk dir is harmless — VFS reads always query SQL.
-  //   "block" (exit 2) — Codex treats the command as rejected. Used for
-  //     everything else (pipes, finds, reads) to prevent host execution.
-  // Safe to return "guide" (Codex also runs original on host) ONLY for pure
-  // output commands: echo/printf/tee writing to a VFS path. A generic ">>"
-  // check would match mixed commands like `sort /etc/passwd > /vfs/out` which
-  // would then execute on the host and read real files.
+  //   "allow" (exit 0 + updatedInput) — ONLY for write-redirect patterns
+  //     (echo/printf/tee … > /file). The VFS write already happened above, so we
+  //     rewrite the host command to a harmless echo: Codex reports success AND
+  //     never re-runs the original redirect against the on-disk mount (F3).
+  //   "block" (exit 2) — everything else (pipes, finds, reads) to prevent host
+  //     execution and inject the result/guidance via stderr.
+  // The write-redirect guard stays narrow: a generic ">>" check would match mixed
+  // commands like `sort /etc/passwd > /vfs/out`. Anchoring to echo/printf/tee keeps
+  // the rewrite to pure-output commands whose side effect is only the SQL write.
   const isWriteRedirect = /^\s*(echo|printf|tee)\b/.test(rewritten) && /\s>>?\s/.test(rewritten);
-  const shellBundle = join(__bundleDir, "shell", "deeplake-shell.js");
   logFn(`unroutable memory command, falling back to VFS shell: ${rewritten}`);
   try {
-    const proc = spawnSync("node", [shellBundle, "-c", rewritten], {
-      encoding: "utf-8",
-      timeout: 10_000,
-    });
+    const proc = runVfsShellFn(rewritten);
     if (proc.status === 0 || (proc.stdout && proc.stdout.trim())) {
       const output = (proc.stdout?.trim() ?? "") || "(done)";
-      // Write redirects: use "guide" so Codex reports success (not "blocked").
-      // Other commands: keep "block" so the host shell never runs them.
-      return { action: isWriteRedirect ? "guide" : "block", output, rewrittenCommand: rewritten };
+      if (isWriteRedirect) {
+        // Rewrite the host command to echo the VFS result. POSIX single-quote
+        // escaping so arbitrary output can't break out of the quotes.
+        const replacementCommand = `printf '%s\\n' '${output.replace(/'/g, `'\\''`)}'`;
+        return { action: "allow", output, replacementCommand, rewrittenCommand: rewritten };
+      }
+      // Non-write command handled by the VFS shell: block so the host never runs
+      // it; the captured output is injected via stderr.
+      return { action: "block", output, rewrittenCommand: rewritten };
     }
     // Shell exited non-zero (bundle missing or command failed) — fall back to guidance.
     return { action: "block", output: buildUnsupportedGuidance(), rewrittenCommand: rewritten };
@@ -404,8 +430,17 @@ async function main(): Promise<void> {
   const decision = await processCodexPreToolUse(input);
 
   if (decision.action === "pass") return;
-  if (decision.action === "guide") {
-    if (decision.output) process.stdout.write(decision.output);
+  if (decision.action === "allow") {
+    // Codex >= 0.136 honors a PreToolUse `permissionDecision: "allow"` with
+    // `updatedInput.command` and runs the rewritten command instead of the
+    // original. The VFS write already happened in processCodexPreToolUse.
+    process.stdout.write(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "allow",
+        updatedInput: { command: decision.replacementCommand ?? "true" },
+      },
+    }));
     process.exit(0);
   }
   if (decision.output) process.stderr.write(decision.output);

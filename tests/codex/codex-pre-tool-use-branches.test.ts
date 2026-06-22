@@ -419,3 +419,56 @@ describe("processCodexPreToolUse: find + grep + fallback", () => {
     expect(d.output).toContain("not supported");
   });
 });
+
+describe("processCodexPreToolUse: memory write redirect (F3 — no double execution)", () => {
+  const writeCmd = "echo 'hello' > ~/.deeplake/memory/h2h/relay-codex.md";
+
+  function writeDeps(extra: Record<string, any> = {}) {
+    return {
+      ...baseDeps(extra),
+      // Writes are not compiled reads — force the inline fast-path to miss so the
+      // command reaches the VFS-shell fallback (the real production behavior).
+      executeCompiledBashCommandFn: vi.fn(async () => null) as any,
+    };
+  }
+
+  it("a successful VFS write returns action=allow with a rewritten host command, NOT guide/pass", async () => {
+    const runVfsShellFn = vi.fn(() => ({ status: 0, stdout: "(done)" }));
+    const d = await processCodexPreToolUse(toolInput(writeCmd), writeDeps({ runVfsShellFn }));
+
+    // allow ⇒ main() emits permissionDecision:allow + updatedInput so Codex runs
+    // the REPLACEMENT, not the original. pass/guide would let the original redirect
+    // re-run on the host (the F3 "No such file or directory" double execution).
+    expect(d.action).toBe("allow");
+    expect(d.action).not.toBe("pass");
+    expect(runVfsShellFn).toHaveBeenCalledTimes(1);
+  });
+
+  it("the replacement command echoes the VFS result and never re-runs the original redirect", async () => {
+    const runVfsShellFn = vi.fn(() => ({ status: 0, stdout: "(done)" }));
+    const d = await processCodexPreToolUse(toolInput(writeCmd), writeDeps({ runVfsShellFn }));
+
+    expect(d.replacementCommand).toBe("printf '%s\\n' '(done)'");
+    // Negative assertions: the host must NOT re-execute the write. The rewrite
+    // must contain neither a redirect operator nor the memory path.
+    expect(d.replacementCommand).not.toMatch(/>/);
+    expect(d.replacementCommand).not.toContain(".deeplake/memory");
+  });
+
+  it("POSIX-escapes single quotes in the VFS output so it can't break out of the rewrite", async () => {
+    const runVfsShellFn = vi.fn(() => ({ status: 0, stdout: "it's done" }));
+    const d = await processCodexPreToolUse(toolInput(writeCmd), writeDeps({ runVfsShellFn }));
+
+    expect(d.action).toBe("allow");
+    expect(d.replacementCommand).toBe(`printf '%s\\n' 'it'\\''s done'`);
+  });
+
+  it("falls back to block+guidance when the VFS shell fails (non-zero, no stdout)", async () => {
+    const runVfsShellFn = vi.fn(() => ({ status: 1, stdout: "" }));
+    const d = await processCodexPreToolUse(toolInput(writeCmd), writeDeps({ runVfsShellFn }));
+
+    expect(d.action).toBe("block");
+    expect(d.output).toContain("not supported");
+    expect(d.replacementCommand).toBeUndefined();
+  });
+});
