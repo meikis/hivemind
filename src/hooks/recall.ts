@@ -46,6 +46,7 @@ import {
   MIN_LEXICAL_OVERLAP,
 } from "./shared/recall-gate.js";
 import { recallTopHit, recallTopHitLexical } from "./shared/recall-query.js";
+import { entrypointPassesOnlyCliGate } from "./shared/capture-gate.js";
 import { formatRecallContext, type RecallHit } from "./shared/recall-format.js";
 import { withDeadline } from "./shared/with-deadline.js";
 import { recordRecallEvent } from "./shared/recall-events.js";
@@ -172,6 +173,11 @@ async function main(): Promise<void> {
   if (proactiveRecallDisabled()) return; // on by default; opt out: HIVEMIND_PROACTIVE_RECALL_DISABLED=1
   if (process.env.HIVEMIND_WIKI_WORKER === "1") return;
   if (!isHivemindPluginEnabled()) return;
+  // Honor HIVEMIND_CAPTURE_ONLY_CLI: when set, SessionStart/Capture/SessionEnd
+  // all skip non-interactive entrypoints (sdk-py/sdk-ts/sdk-cli). Recall must
+  // too — otherwise it would inject hidden context into Agent SDK / `claude -p`
+  // runs the user explicitly scoped to CLI-only, perturbing scripted output.
+  if (!entrypointPassesOnlyCliGate()) return;
 
   const input = await readStdin<RecallInput>();
 

@@ -74,7 +74,7 @@ function parse(out: string | null): any {
 }
 
 beforeEach(() => {
-  for (const k of ["HIVEMIND_PROACTIVE_RECALL", "HIVEMIND_PROACTIVE_RECALL_DISABLED", "HIVEMIND_SEMANTIC_SEARCH", "HIVEMIND_RECALL_TIMEOUT_MS", "HIVEMIND_RECALL_MIN_OVERLAP", "HIVEMIND_WIKI_WORKER"]) delete process.env[k];
+  for (const k of ["HIVEMIND_PROACTIVE_RECALL", "HIVEMIND_PROACTIVE_RECALL_DISABLED", "HIVEMIND_SEMANTIC_SEARCH", "HIVEMIND_RECALL_TIMEOUT_MS", "HIVEMIND_RECALL_MIN_OVERLAP", "HIVEMIND_WIKI_WORKER", "HIVEMIND_CAPTURE_ONLY_CLI", "CLAUDE_CODE_ENTRYPOINT"]) delete process.env[k];
   stdinMock.mockReset().mockResolvedValue({ prompt: "how did we fix the parser typeerror crash bug", session_id: "sid", cwd: "/repo" });
   loadConfigMock.mockReset().mockReturnValue(CONFIG);
   pluginEnabledMock.mockReset().mockReturnValue(true);
@@ -129,6 +129,20 @@ describe("recall hook — guards (no search, no emit)", () => {
     expect(out).toBeNull();
     expect(queryMock).not.toHaveBeenCalled();
     expect(debugLogMock).toHaveBeenCalledWith("skip no-config");
+  });
+
+  it("honors HIVEMIND_CAPTURE_ONLY_CLI — skips a headless `claude -p` (sdk-cli) session", async () => {
+    const out = await runHook({ HIVEMIND_CAPTURE_ONLY_CLI: "true", CLAUDE_CODE_ENTRYPOINT: "sdk-cli" });
+    expect(out).toBeNull();
+    expect(stdinMock).not.toHaveBeenCalled(); // gated before any I/O
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("still recalls for an interactive cli session under HIVEMIND_CAPTURE_ONLY_CLI", async () => {
+    embeddingsDisabledMock.mockReturnValue(false);
+    queryMock.mockResolvedValue([row({ score: 0.8, author: "levon" })]);
+    const out = await runHook({ HIVEMIND_CAPTURE_ONLY_CLI: "true", CLAUDE_CODE_ENTRYPOINT: "cli" });
+    expect(parse(out).hookSpecificOutput.additionalContext).toContain("levon");
   });
 });
 
