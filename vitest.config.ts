@@ -98,6 +98,15 @@ export default defineConfig({
           functions: 90,
           lines: 90,
         },
+        // PR #284 — fix(codex): PreToolUse allow-rewrite for memory writes (F3).
+        // Branch suite covers the read fast-path, write-redirect allow/block
+        // arms, and the graph/default-deps branches. Held at 90 to lock the gate.
+        "src/hooks/codex/pre-tool-use.ts": {
+          statements: 90,
+          branches: 90,
+          functions: 90,
+          lines: 90,
+        },
         "src/hooks/session-queue.ts": {
           statements: 80,
           branches: 80,
