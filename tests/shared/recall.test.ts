@@ -79,6 +79,21 @@ describe("shouldRecall — the precision gate (NOT every prompt)", () => {
     expect(d.recall).toBe(false);
     expect(d.reason).toBe("low-signal");
   });
+
+  it("skips SHORT generic question follow-ups (weak signal needs length)", () => {
+    // A bare question word must NOT trigger recall on a terse follow-up — these
+    // are normal back-and-forth, not a memory lookup (codex cycle 9, P2).
+    for (const p of ["which folder", "what's the cap?", "how do I?", "where is it"]) {
+      const d = shouldRecall(p);
+      expect(d.recall, p).toBe(false);
+    }
+  });
+
+  it("recalls a substantive question (weak signal + enough length → signal)", () => {
+    const d = shouldRecall("how do I configure the storage provider for byoc buckets");
+    expect(d.recall).toBe(true);
+    expect(d.reason).toBe("signal");
+  });
 });
 
 describe("proactiveRecallDisabled — opt-out (enabled by default)", () => {
