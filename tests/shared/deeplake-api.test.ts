@@ -33,6 +33,20 @@ afterEach(() => {
 // ── query() ─────────────────────────────────────────────────────────────────
 
 describe("DeeplakeApi.query", () => {
+  it("throws without fetching when an already-aborted signal is passed", async () => {
+    const api = makeApi();
+    await expect(api.query("SELECT 1", AbortSignal.abort())).rejects.toThrow(/abort/i);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards a live caller signal into the fetch call", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ columns: ["id"], rows: [["1"]] }));
+    const api = makeApi();
+    const ctrl = new AbortController();
+    await api.query("SELECT id FROM t", ctrl.signal);
+    expect(mockFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
+  });
+
   it("sends correct SQL and parses rows", async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({
       columns: ["id", "name"],

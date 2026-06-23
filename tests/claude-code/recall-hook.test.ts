@@ -145,12 +145,14 @@ describe("recall hook — lexical path (no embeddings)", () => {
     expect(recordEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: "injected", mode: "lexical", teammate: true }));
   });
 
-  it("does NOT inject when the lexical overlap is below the floor", async () => {
-    queryMock.mockResolvedValue([row({ score: 1 })]); // < MIN_LEXICAL_OVERLAP (2)
+  it("does NOT inject when the lexical overlap is below the floor (records 'none')", async () => {
+    // A too-weak lexical match (overlap 1 < MIN 2) is treated as nothing
+    // relevant — recorded as 'none', not 'below' (which is for scored-but-low
+    // semantic hits).
+    queryMock.mockResolvedValue([row({ score: 1 })]);
     const out = await runHook();
     expect(out).toBeNull();
-    expect(debugLogMock).toHaveBeenCalledWith(expect.stringContaining("hit=below"));
-    expect(recordEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: "below" }));
+    expect(recordEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: "none" }));
   });
 
   it("does not search when the prompt passes the gate but yields fewer than 2 keywords", async () => {
@@ -237,10 +239,14 @@ describe("recall hook — latency budget + failure isolation", () => {
     expect(debugLogMock).toHaveBeenCalledWith(expect.stringContaining("skip timeout"));
   });
 
-  it("never throws / never emits when the query errors (failure-isolated)", async () => {
+  it("records 'error' (not 'timeout') and never emits when the query fails", async () => {
     queryMock.mockRejectedValue(new Error("backend down"));
     const out = await runHook();
     expect(out).toBeNull();
+    // A fast backend failure must be telemetered as 'error', distinct from a
+    // real deadline 'timeout' (codex P3).
+    expect(recordEventMock).toHaveBeenCalledWith(expect.objectContaining({ event: "error" }));
+    expect(recordEventMock).not.toHaveBeenCalledWith(expect.objectContaining({ event: "timeout" }));
   });
 
   it("emits nothing when there are no matching rows", async () => {

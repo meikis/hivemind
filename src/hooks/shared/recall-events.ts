@@ -18,7 +18,7 @@ import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 
 export type RecallEventKind =
-  | "injected" | "below" | "none" | "timeout" | "no-config" | "unattributable";
+  | "injected" | "below" | "none" | "timeout" | "error" | "no-config" | "unattributable";
 
 export interface RecallEvent {
   event: RecallEventKind;

@@ -62,6 +62,7 @@ const RECALL_BUDGET_MS = parsePositive(process.env.HIVEMIND_RECALL_TIMEOUT_MS, 1
 type FindResult =
   | { kind: "hit"; hit: RecallHit }
   | { kind: "none" }
+  | { kind: "error" }
   | { kind: "timeout" };
 
 const TIMED_OUT: FindResult = { kind: "timeout" };
@@ -92,10 +93,13 @@ function emit(additionalContext: string): void {
 async function findHit(
   input: RecallInput,
   config: NonNullable<ReturnType<typeof loadConfig>>,
+  signal: AbortSignal,
 ): Promise<FindResult> {
   const prompt = input.prompt ?? "";
   const api = new DeeplakeApi(config.token, config.apiUrl, config.orgId, config.workspaceId, config.tableName);
-  const q = (sql: string) => api.query(sql) as Promise<Array<Record<string, unknown>>>;
+  // Pass the budget's abort signal so a timeout actually CANCELS the in-flight
+  // query rather than leaving the socket/retry loop running.
+  const q = (sql: string) => api.query(sql, signal) as Promise<Array<Record<string, unknown>>>;
   const opts = {
     // Scope to the CURRENT project: same-project summaries from any teammate
     // (the cross-teammate value) without injecting unrelated context from
@@ -105,29 +109,39 @@ async function findHit(
     limit: 3,
   };
 
-  // Hybrid: prefer a semantic hit that clears the threshold; otherwise fall
-  // through to lexical (exact keyword/identifier match), the same way the grep
-  // path blends both. A below-threshold semantic hit must NOT suppress a good
-  // lexical match (stack traces / exact error names).
-  let semanticHit: RecallHit | null = null;
-  if (SEMANTIC_ENABLED) {
-    const vec = await new EmbedClient({ daemonEntry: resolveDaemonPath(), timeoutMs: EMBED_TIMEOUT_MS })
-      .embed(prompt, "query");
-    if (vec) {
-      semanticHit = await recallTopHit(q, config.tableName, vec, opts);
-      if (semanticHit && passesThreshold(semanticHit.score)) return { kind: "hit", hit: semanticHit };
+  // Failure-isolated: catch our own I/O errors and report `error` so the caller
+  // (and telemetry) never mislabels a backend failure as a deadline timeout.
+  try {
+    // Hybrid: prefer a semantic hit that clears the threshold; otherwise fall
+    // through to lexical (exact keyword/identifier match), the same way the grep
+    // path blends both. A below-threshold semantic hit must NOT suppress a good
+    // lexical match (stack traces / exact error names).
+    let semanticHit: RecallHit | null = null;
+    if (SEMANTIC_ENABLED) {
+      const vec = await new EmbedClient({ daemonEntry: resolveDaemonPath(), timeoutMs: EMBED_TIMEOUT_MS })
+        .embed(prompt, "query");
+      if (vec) {
+        semanticHit = await recallTopHit(q, config.tableName, vec, opts);
+        if (semanticHit && passesThreshold(semanticHit.score)) return { kind: "hit", hit: semanticHit };
+      }
     }
-  }
 
-  const keywords = extractKeywords(prompt);
-  if (keywords.length >= 2) {
-    const lex = await recallTopHitLexical(q, config.tableName, keywords, opts);
-    if (lex && lex.score >= MIN_LEXICAL_OVERLAP) return { kind: "hit", hit: lex };
-  }
+    const keywords = extractKeywords(prompt);
+    if (keywords.length >= 2) {
+      const lex = await recallTopHitLexical(q, config.tableName, keywords, opts);
+      if (lex && lex.score >= MIN_LEXICAL_OVERLAP) return { kind: "hit", hit: lex };
+    }
 
-  // Nothing cleared a bar. Surface the below-threshold semantic hit (so
-  // telemetry records 'below') if we had one; otherwise nothing matched.
-  return semanticHit ? { kind: "hit", hit: semanticHit } : { kind: "none" };
+    // Nothing cleared a bar. Surface the below-threshold semantic hit (so
+    // telemetry records 'below') if we had one; otherwise nothing matched.
+    return semanticHit ? { kind: "hit", hit: semanticHit } : { kind: "none" };
+  } catch (e) {
+    // Includes the AbortError when the budget cancels us mid-flight; the
+    // wrapper has already settled to TIMED_OUT in that case, so this result is
+    // ignored. A genuine fast failure is reported as `error`.
+    log(`search error: ${(e as Error)?.message ?? e}`);
+    return { kind: "error" };
+  }
 }
 
 /** Mode-aware relevance gate: cosine threshold for semantic, overlap for lexical. */
@@ -157,10 +171,19 @@ async function main(): Promise<void> {
   }
 
   // Bound the whole search path so the turn never stalls beyond the budget.
-  const res = await withDeadline(findHit(input, config), RECALL_BUDGET_MS, TIMED_OUT);
+  // On timeout we ABORT the controller so the in-flight query is cancelled
+  // (not just abandoned) and the hook process can exit promptly.
+  const controller = new AbortController();
+  const res = await withDeadline(findHit(input, config, controller.signal), RECALL_BUDGET_MS, TIMED_OUT);
   if (res.kind === "timeout") {
+    controller.abort();
     log(`skip timeout budget=${RECALL_BUDGET_MS}ms`);
     recordRecallEvent({ event: "timeout", gate: reason, session });
+    return;
+  }
+  if (res.kind === "error") {
+    log(`skip search-error gate=${reason}`);
+    recordRecallEvent({ event: "error", gate: reason, session });
     return;
   }
   if (res.kind === "none") {

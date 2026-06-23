@@ -218,13 +218,13 @@ export class DeeplakeApi {
   ) {}
 
   /** Execute SQL with retry on transient errors and bounded concurrency. */
-  async query(sql: string): Promise<Record<string, unknown>[]> {
+  async query(sql: string, signal?: AbortSignal): Promise<Record<string, unknown>[]> {
     const startedAt = Date.now();
     const summary = summarizeSql(sql);
     traceSql(`query start: ${summary}`);
     await this._sem.acquire();
     try {
-      const rows = await this._queryWithRetry(sql);
+      const rows = await this._queryWithRetry(sql, signal);
       traceSql(`query ok (${Date.now() - startedAt}ms, rows=${rows.length}): ${summary}`);
       return rows;
     } catch (e: unknown) {
@@ -236,13 +236,21 @@ export class DeeplakeApi {
     }
   }
 
-  private async _queryWithRetry(sql: string): Promise<Record<string, unknown>[]> {
+  private async _queryWithRetry(sql: string, externalSignal?: AbortSignal): Promise<Record<string, unknown>[]> {
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // A caller-supplied signal (e.g. recall's latency budget) aborts the
+      // whole operation — including between retries — so in-flight work is
+      // actually cancelled, not just abandoned.
+      if (externalSignal?.aborted) throw new Error("Query aborted");
       let resp: Response;
       const timeoutMs = getQueryTimeoutMs();
       try {
-        const signal = AbortSignal.timeout(timeoutMs);
+        // Cancel on whichever fires first: the caller's signal or our own
+        // per-attempt fetch timeout.
+        const signal = externalSignal
+          ? AbortSignal.any([externalSignal, AbortSignal.timeout(timeoutMs)])
+          : AbortSignal.timeout(timeoutMs);
         resp = await fetch(`${this.apiUrl}/workspaces/${this.workspaceId}/tables/query`, {
           method: "POST",
           headers: {

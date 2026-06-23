@@ -225,14 +225,15 @@ describe("withDeadline — bounds the synchronous recall path", () => {
     expect(r).toBe("skip");
   });
 
-  it("resolves to the fallback when the promise rejects (never throws on the critical path)", async () => {
-    const r = await withDeadline(Promise.reject(new Error("boom")), 1000, "skip");
-    expect(r).toBe("skip");
+  it("PROPAGATES a rejection (does not mask a failure as a timeout)", async () => {
+    // Pure deadline: a real error must surface distinctly, not become the
+    // fallback. The caller (findHit) is failure-isolated instead.
+    await expect(withDeadline(Promise.reject(new Error("boom")), 1000, "skip")).rejects.toThrow("boom");
   });
 
-  it("with a non-positive deadline still degrades a rejection to the fallback", async () => {
-    expect(await withDeadline(Promise.reject(new Error("x")), 0, "skip")).toBe("skip");
+  it("with a non-positive deadline behaves exactly like the wrapped promise", async () => {
     expect(await withDeadline(Promise.resolve("ok"), -1, "skip")).toBe("ok");
+    await expect(withDeadline(Promise.reject(new Error("x")), 0, "skip")).rejects.toThrow("x");
   });
 });
 
