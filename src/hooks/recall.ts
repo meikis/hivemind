@@ -104,6 +104,12 @@ async function findHit(
     // Scope to the CURRENT project: same-project summaries from any teammate
     // (the cross-teammate value) without injecting unrelated context from
     // other repos in the org. Org-wide only as a fallback when cwd is absent.
+    // NOTE: `project` is the cwd basename — the SAME value capture tags rows
+    // with — so this filter is exactly as precise as the stored data. Repos
+    // that share a leaf directory name (…/foo/api and …/bar/api) collide; fully
+    // disambiguating them needs a more-unique project key on summary rows (a
+    // capture/schema change + migration), tracked separately. Basename scoping
+    // is still strictly better than the org-wide search it replaced.
     project: input.cwd ? projectNameFromCwd(input.cwd) : undefined,
     excludePath: input.session_id ? `/summaries/${config.userName}/${input.session_id}.md` : undefined,
     limit: 3,
