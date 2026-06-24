@@ -159,9 +159,13 @@ export async function runPush(args: PushArgs): Promise<PushSummary> {
   const contributors = computePushContributors(local.contributors, local.author, args.pusher);
   const { key: projectKey, project } = deriveProjectKey(args.cwd);
   const now = args.now ?? new Date().toISOString();
-  // Preserve the file's original creation time across versions; fall back to
-  // now for a legacy file that never recorded one.
-  const createdAt = local.createdAt ?? now;
+  // Preserve the lineage's original creation time across version bumps: prefer
+  // the local file's frontmatter, then the already-fetched remote row's
+  // created_at (so re-pushing a legacy file with no local timestamp doesn't
+  // reset the lineage), and only stamp `now` for a genuinely new skill.
+  // `||` (not `??`) so an empty-string created_at on a legacy remote row falls
+  // through to `now` rather than persisting "".
+  const createdAt = local.createdAt || current?.createdAt || now;
 
   if (!args.dryRun) {
     await insertSkillRow({
