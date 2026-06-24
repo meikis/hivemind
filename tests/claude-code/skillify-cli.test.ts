@@ -292,6 +292,87 @@ describe("pull", () => {
   // (buildPullSql, resolvePullDestination).
 });
 
+// ── push ──────────────────────────────────────────────────────────────────
+
+describe("push", () => {
+  // push reads a real local SKILL.md, so each test runs in a temp project dir.
+  // The DeeplakeApi mock returns a fake row (version 1) for the version SELECT,
+  // so a real push bumps to v2; the INSERT response is ignored.
+  let pushDir: string;
+  function writeProjectSkill(name: string): void {
+    const dir = join(process.cwd(), ".claude", "skills", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      [
+        "---",
+        `name: ${name}`,
+        'description: "a pushed skill"',
+        'trigger: "do it"',
+        "author: alice",
+        "version: 1",
+        "created_by_agent: claude_code",
+        "---",
+        "",
+        "## Body",
+      ].join("\n"),
+    );
+  }
+  beforeEach(() => {
+    pushDir = mkdtempSync(join(tmpdir(), "skillify-cli-push-"));
+    process.chdir(pushDir);
+  });
+  afterEach(() => {
+    process.chdir(originalCwd);
+    rmSync(pushDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+
+  it("--dry-run reads the local skill and prints the summary without writing", async () => {
+    writeProjectSkill("demo-skill");
+    runSkillifyCommand(["push", "demo-skill", "--dry-run"]);
+    await new Promise(r => setImmediate(r));
+    const out = logged.join("\n");
+    expect(out).toMatch(/Source:/);
+    expect(out).toMatch(/would push/);
+    expect(out).toMatch(/Dry run/);
+  });
+
+  it("real push reports the published version (remote v1 → v2)", async () => {
+    writeProjectSkill("demo-skill");
+    runSkillifyCommand(["push", "demo-skill"]);
+    await new Promise(r => setImmediate(r));
+    const out = logged.join("\n");
+    expect(out).toMatch(/✓ pushed/);
+    expect(out).toMatch(/Pushed to org skills table as version 2/);
+  });
+
+  it("missing local skill surfaces a 'not found' error and exits 1", async () => {
+    runSkillifyCommand(["push", "no-such-skill"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).toMatch(/not found/);
+  });
+
+  it("invalid --from is rejected", async () => {
+    writeProjectSkill("demo-skill");
+    runSkillifyCommand(["push", "demo-skill", "--from", "weird"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).toMatch(/Invalid --from/);
+  });
+
+  it("missing skill name is rejected with usage", async () => {
+    runSkillifyCommand(["push"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).toMatch(/Usage: hivemind skillify push/);
+  });
+
+  it("requires login", async () => {
+    loadConfigMock.mockReturnValue(null);
+    runSkillifyCommand(["push", "demo-skill"]);
+    await new Promise(r => setImmediate(r));
+    expect(erred.join("\n")).toMatch(/Not logged in/);
+  });
+});
+
 // ── unpull ────────────────────────────────────────────────────────────────
 
 describe("unpull", () => {

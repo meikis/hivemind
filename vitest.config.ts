@@ -344,6 +344,7 @@ export default defineConfig({
         // and the uncaught-rethrow branch covers everything else implicitly.
         "src/skillify/legacy-migration.ts":  { statements: 90, branches: 80, functions: 90, lines: 90 },
         "src/skillify/pull.ts":              { statements: 90, branches: 75, functions: 90, lines: 90 },
+        "src/skillify/push.ts":              { statements: 90, branches: 90, functions: 90, lines: 90 },
         "src/skillify/scope-config.ts":      { statements: 90, branches: 90, functions: 90, lines: 90 },
         "src/skillify/skill-writer.ts":      { statements: 90, branches: 80, functions: 90, lines: 90 },
         "src/skillify/skills-table.ts":      { statements: 90, branches: 70, functions: 90, lines: 90 },
