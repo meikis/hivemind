@@ -17,7 +17,7 @@ import { recallTopHit, recallTopHitLexical } from "../../src/hooks/shared/recall
 import { withDeadline } from "../../src/hooks/shared/with-deadline.js";
 import { recordRecallEvent } from "../../src/hooks/shared/recall-events.js";
 import { setFakeHome, clearFakeHome } from "./fake-home.js";
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach } from "vitest";
@@ -412,8 +412,14 @@ describe("recordRecallEvent — always-on JSONL sink", () => {
   });
 
   it("never throws when the path is unwritable (telemetry must not break the hook)", () => {
-    setFakeHome("/proc/nonexistent/cannot-write");
+    // Point home at an existing FILE so the `.deeplake` dir can't be created
+    // (ENOTDIR) — a deterministic, fast unwritable path. Do NOT use
+    // /proc/<missing>/... : recursive mkdir on a procfs path hangs on some
+    // kernels, which would wedge the whole test run (and CI).
+    const notADir = join(home, "home-is-a-file");
+    writeFileSync(notADir, "x");
+    setFakeHome(notADir);
     expect(() => recordRecallEvent({ event: "none" })).not.toThrow();
-    expect(existsSync(join(home, ".deeplake", "recall-events.jsonl"))).toBe(false);
+    expect(existsSync(join(notADir, ".deeplake", "recall-events.jsonl"))).toBe(false);
   });
 });
