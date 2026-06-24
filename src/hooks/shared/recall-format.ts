@@ -100,9 +100,11 @@ export function formatRecallContext(input: FormatRecallInput): string {
   // so DB-derived values can't produce unsafe command text. Legacy/odd paths
   // just omit the pointer; the recall still injects.
   const parsed = parseSummaryPath(hit.path);
-  const safeSeg = /^[A-Za-z0-9._-]+$/;
+  // A segment must be safe chars AND not be all-dots ("." / ".."): a bare ".."
+  // segment would let a DB-derived path traverse out of summaries/.
+  const safeSeg = (s: string) => /^[A-Za-z0-9._-]+$/.test(s) && !/^\.+$/.test(s);
   const root = memoryRoot.replace(/\/+$/, "");
-  const pathLine = parsed && safeSeg.test(parsed.author) && safeSeg.test(parsed.session)
+  const pathLine = parsed && safeSeg(parsed.author) && safeSeg(parsed.session)
     ? `  Full summary: ${root}/summaries/${parsed.author}/${parsed.session}.md`
     : "";
 

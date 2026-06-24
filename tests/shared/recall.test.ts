@@ -189,6 +189,16 @@ describe("formatRecallContext", () => {
     expect(out).not.toContain("cat "); // not framed as a shell command
   });
 
+  it("omits the path pointer for a traversal-y segment ('..') but still recalls", () => {
+    const out = formatRecallContext({
+      hit: { ...base, path: "/summaries/../sess-1.md", author: "levon" },
+      currentUser: "sasun", memoryRoot: "~/.deeplake/memory", now,
+    });
+    expect(out).toContain("HIVEMIND RECALL");      // still injects the attributed hit
+    expect(out).not.toContain("Full summary:");    // but no unsafe traversal pointer
+    expect(out).not.toContain("..");
+  });
+
   it("says 'you' when the hit is the current user's own work", () => {
     const out = formatRecallContext({ hit: base, currentUser: "levon", memoryRoot: "~/.deeplake/memory", now });
     expect(out).toContain("you");
