@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   shouldRecall,
   passesThreshold,
@@ -377,6 +377,27 @@ describe("RECALL_THRESHOLD — default 0.55 + bounded env override", () => {
     expect(passesThreshold(0.55)).toBe(true);
     expect(passesThreshold(0.6)).toBe(true);
     expect(passesThreshold(0.54)).toBe(false);
+  });
+
+  it("honors a valid HIVEMIND_RECALL_THRESHOLD override and falls back on a bad value", async () => {
+    const orig = process.env.HIVEMIND_RECALL_THRESHOLD;
+    try {
+      process.env.HIVEMIND_RECALL_THRESHOLD = "0.7"; // valid override branch
+      vi.resetModules();
+      let m = await import("../../src/hooks/shared/recall-gate.js");
+      expect(m.RECALL_THRESHOLD).toBe(0.7);
+
+      for (const bad of ["nonsense", "0", "1.5", "-0.2"]) { // each hits the fallback branch
+        process.env.HIVEMIND_RECALL_THRESHOLD = bad;
+        vi.resetModules();
+        m = await import("../../src/hooks/shared/recall-gate.js");
+        expect(m.RECALL_THRESHOLD).toBe(0.55);
+      }
+    } finally {
+      if (orig === undefined) delete process.env.HIVEMIND_RECALL_THRESHOLD;
+      else process.env.HIVEMIND_RECALL_THRESHOLD = orig;
+      vi.resetModules();
+    }
   });
 });
 
