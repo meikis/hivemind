@@ -58,6 +58,9 @@ Hivemind also mines reusable Claude skills from agent sessions and stores them i
 - `hivemind skillify pull --dry-run` — preview without touching disk
 - `hivemind skillify pull --force` — overwrite local (creates `.bak`)
 - `hivemind skillify pull <skill-name>` — pull only that one skill (combines with `--user`)
+- `hivemind skillify push <skill-name>` — upload a local skill to the org table (inverse of pull; re-push lands a new version)
+- `hivemind skillify push --from project|global` — which local skills dir to read (default: project)
+- `hivemind skillify push --dry-run` — preview without writing to the org table
 - `hivemind skillify unpull` — remove every skill previously installed by pull
 - `hivemind skillify unpull --user <email>` — remove only that author's pulls
 - `hivemind skillify unpull --not-mine` — remove all pulls except your own

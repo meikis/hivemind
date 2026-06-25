@@ -217,7 +217,11 @@ describe("hermes session-start hook — local mined skills note", () => {
     loadCredentialsMock.mockReturnValue(null);
     await runHook();
     const payload = JSON.parse(consoleLogMock.mock.calls[0][0] as string);
-    expect(payload.context).not.toContain("local skill");
+    // Match the mined-skills note's own signature, not the bare substring
+    // "local skill" — the always-present skillify command reference now
+    // documents `push <skill-name>` ("upload a local skill ..."), which would
+    // otherwise false-positive here.
+    expect(payload.context).not.toContain("from past 'hivemind skillify mine-local'");
     expect(payload.context).not.toContain("live in");
   });
 
