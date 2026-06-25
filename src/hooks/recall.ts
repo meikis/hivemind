@@ -30,6 +30,7 @@ import { readStdin } from "../utils/stdin.js";
 import { loadConfig } from "../config.js";
 import { DeeplakeApi } from "../deeplake-api.js";
 import { EmbedClient } from "../embeddings/client.js";
+import { embedSummaryWithWarmup } from "../embeddings/embed-summary.js";
 import { embeddingsDisabled } from "../embeddings/disable.js";
 import { ensurePluginNodeModulesLink } from "../embeddings/self-heal.js";
 import { isHivemindPluginEnabled } from "../utils/plugin-state.js";
@@ -57,11 +58,21 @@ const SEMANTIC_ENABLED = process.env.HIVEMIND_SEMANTIC_SEARCH !== "false" && !em
 // Hard ceiling on the recall critical path. recall runs SYNCHRONOUSLY on
 // UserPromptSubmit — it blocks the turn — so we cap the worst case to a
 // predictable budget and degrade to "skip" rather than stall on a slow backend.
-const RECALL_BUDGET_MS = parsePositive(process.env.HIVEMIND_RECALL_TIMEOUT_MS, 1000);
+// Budget raised 1000->1500 so a one-time cold-daemon warmup (~300ms) + embed
+// (~500ms) + query comfortably fit; still well under the 2s recall hook timeout.
+const RECALL_BUDGET_MS = parsePositive(process.env.HIVEMIND_RECALL_TIMEOUT_MS, 1500);
 // The embed self-timeout is clamped to the budget so EmbedClient.embed() (which
 // has no abort hook) can never outlast the overall recall budget, even if a
 // user sets HIVEMIND_SEMANTIC_EMBED_TIMEOUT_MS higher than the budget.
 const EMBED_TIMEOUT_MS = Math.min(parsePositive(process.env.HIVEMIND_SEMANTIC_EMBED_TIMEOUT_MS, 500), RECALL_BUDGET_MS);
+// Bounded daemon warmup on the recall path. A COLD embed daemon's model loads
+// in ~300ms, but EmbedClient.embed() fire-and-forgets on a cold socket and
+// returns null immediately — so the FIRST recall-worthy prompt of a session
+// silently misses SEMANTIC recall (the model becomes ready just after). The
+// budget easily covers a ~300ms spawn, so warm the daemon (bounded) BEFORE
+// embedding instead of racing it. Warm sessions pay ~0 (warmup returns as soon
+// as the socket already accepts).
+const WARMUP_BUDGET_MS = Math.min(parsePositive(process.env.HIVEMIND_RECALL_WARMUP_MS, 700), RECALL_BUDGET_MS);
 
 type FindResult =
   | { kind: "hit"; hit: RecallHit }
@@ -136,8 +147,17 @@ async function findHit(
       // (falling back to lexical/null) even though embeddings are installed.
       // Best-effort: a failure here just means we degrade to lexical.
       try { ensurePluginNodeModulesLink({ bundleDir: __bundleDir }); } catch { /* best-effort */ }
-      const vec = await new EmbedClient({ daemonEntry: resolveDaemonPath(), timeoutMs: EMBED_TIMEOUT_MS })
-        .embed(prompt, "query");
+      // Warm the daemon (spawn + wait for socket, bounded) THEN embed with one
+      // retry, so a cold first prompt doesn't lose semantic recall to the
+      // fire-and-forget spawn OR to the daemon's post-spawn recycle race (the
+      // retry covers the case where the daemon became ready only after attempt
+      // 1 connected). Mirrors the finalize path. Warm sessions pay ~0.
+      const client = new EmbedClient({
+        daemonEntry: resolveDaemonPath(),
+        timeoutMs: EMBED_TIMEOUT_MS,
+        spawnWaitMs: WARMUP_BUDGET_MS,
+      });
+      const vec = await embedSummaryWithWarmup(prompt, "query", { client, log });
       if (vec) {
         semanticHit = await recallTopHit(q, config.tableName, vec, opts);
         if (semanticHit && passesThreshold(semanticHit.score)) return { kind: "hit", hit: semanticHit };

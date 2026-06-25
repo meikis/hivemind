@@ -30,7 +30,7 @@ vi.mock("../../src/embeddings/disable.js", () => ({ embeddingsDisabled: (...a: u
 vi.mock("../../src/utils/plugin-state.js", () => ({ isHivemindPluginEnabled: (...a: unknown[]) => pluginEnabledMock(...a) }));
 vi.mock("../../src/utils/debug.js", () => ({ log: (_t: string, msg: string) => debugLogMock(msg) }));
 vi.mock("../../src/embeddings/client.js", () => ({
-  EmbedClient: class { embed(...a: unknown[]) { return embedMock(...a); } },
+  EmbedClient: class { warmup() { return Promise.resolve(true); } embed(...a: unknown[]) { return embedMock(...a); } },
 }));
 vi.mock("../../src/deeplake-api.js", () => ({
   DeeplakeApi: class { query(sql: string) { return queryMock(sql); } },

@@ -18,7 +18,7 @@ import { deeplakeClientHeader } from "../utils/client-header.js";
 const dlog = (msg: string) => _log("wiki-worker", msg);
 import { finalizeSummary, releaseLock } from "./summary-state.js";
 import { uploadSummary } from "./upload-summary.js";
-import { EmbedClient } from "../embeddings/client.js";
+import { embedSummaryWithWarmup } from "../embeddings/embed-summary.js";
 import { embeddingsDisabled } from "../embeddings/disable.js";
 
 interface WorkerConfig {
@@ -227,16 +227,16 @@ async function main(): Promise<void> {
         const fname = `${cfg.sessionId}.md`;
         const vpath = `/summaries/${cfg.userName}/${fname}`;
         // Embed the summary so it ranks in the semantic retrieval branch.
-        // Skipped when globally disabled or the daemon is unreachable —
-        // uploadSummary() writes SQL NULL in that case.
+        // Skipped when globally disabled. The wiki-worker is a detached
+        // background process, so we warm the daemon and retry once (via
+        // embedSummaryWithWarmup) instead of the hot-path fire-and-forget
+        // embed() — that single cold-start race was stranding most ENABLED
+        // users' summaries with a permanent NULL embedding (no later backfill
+        // exists), the dominant fixable cause of low embedding coverage.
         let embedding: number[] | null = null;
         if (!embeddingsDisabled()) {
-          try {
-            const daemonEntry = join(dirname(fileURLToPath(import.meta.url)), "embeddings", "embed-daemon.js");
-            embedding = await new EmbedClient({ daemonEntry }).embed(text, "document");
-          } catch (e: any) {
-            wlog(`summary embedding failed, writing NULL: ${e.message}`);
-          }
+          const daemonEntry = join(dirname(fileURLToPath(import.meta.url)), "embeddings", "embed-daemon.js");
+          embedding = await embedSummaryWithWarmup(text, "document", { daemonEntry, log: wlog });
         }
         const result = await uploadSummary(query, {
           tableName: cfg.memoryTable,
