@@ -506,12 +506,25 @@ chmodSync("harnesses/openclaw/dist/skillify-worker.js", 0o755);
 // Hivemind MCP server (stdio). Reused by Cline / Roo / Kilo / any MCP-aware
 // agent. Lives at ~/.hivemind/mcp/server.js after install.
 await build({
-  // wiki-worker + skillify-worker ship alongside the server so the Cowork
-  // ingester can spawn them for idle Cowork sessions (Cowork has no SessionEnd
-  // hook). install copies the whole mcp/bundle dir, so adding the entries is
-  // enough to deliver them at ~/.hivemind/mcp/.
+  entryPoints: { server: "dist/src/mcp/server.js" },
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  outdir: "mcp/bundle",
+  external: ["node:*", "node-liblzma", "@mongodb-js/zstd"],
+  // server.js source has no shebang, so the banner supplies one.
+  banner: { js: "#!/usr/bin/env node" },
+});
+chmodSync("mcp/bundle/server.js", 0o755);
+
+// wiki-worker + skillify-worker ship alongside the server so the Cowork
+// ingester can spawn them for idle Cowork sessions (Cowork has no SessionEnd
+// hook). install copies the whole mcp/bundle dir, so shipping them here is
+// enough to deliver them at ~/.hivemind/mcp/. NO banner: these sources already
+// start with their own `#!/usr/bin/env node`, and a banner would double it
+// (a second shebang on line 2 is a SyntaxError).
+await build({
   entryPoints: {
-    server: "dist/src/mcp/server.js",
     "wiki-worker": "dist/src/hooks/wiki-worker.js",
     "skillify-worker": "dist/src/skillify/skillify-worker.js",
   },
@@ -520,9 +533,7 @@ await build({
   format: "esm",
   outdir: "mcp/bundle",
   external: ["node:*", "node-liblzma", "@mongodb-js/zstd"],
-  banner: { js: "#!/usr/bin/env node" },
 });
-chmodSync("mcp/bundle/server.js", 0o755);
 chmodSync("mcp/bundle/wiki-worker.js", 0o755);
 chmodSync("mcp/bundle/skillify-worker.js", 0o755);
 writeFileSync("mcp/bundle/package.json", esmPackageJson);
