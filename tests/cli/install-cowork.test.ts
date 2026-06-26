@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setFakeHome, clearFakeHome } from "../shared/fake-home.js";
@@ -20,7 +20,11 @@ let tmpPkg: string;
 let configPath: string;
 
 beforeEach(() => {
-  tmpRoot = join(tmpdir(), `hm-cowork-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  // mkdtempSync atomically creates a uniquely-named dir under the OS temp dir.
+  // Using it (rather than join(tmpdir(), <handmade name>)) is the pattern CodeQL
+  // accepts — it sanitizes the predictable-path taint, clearing the "insecure
+  // temporary file" alerts for every path derived from this root.
+  tmpRoot = mkdtempSync(join(tmpdir(), "hm-cowork-"));
   tmpHome = join(tmpRoot, "home");
   tmpPkg = join(tmpRoot, "pkg");
   mkdirSync(tmpHome, { recursive: true });
