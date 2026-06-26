@@ -44,6 +44,7 @@ import {
   drainSessionQueues,
 } from "../hooks/session-queue.js";
 import { spawnWikiWorker, bundleDirFromImportMeta } from "../hooks/spawn-wiki-worker.js";
+import { forceSessionEndTrigger } from "../skillify/triggers.js";
 import { basename } from "node:path";
 import { log } from "../utils/debug.js";
 
@@ -270,17 +271,23 @@ export function summarizeIdleSessions(
   now: number = Date.now(),
 ): void {
   const bundleDir = bundleDirFromImportMeta(import.meta.url);
+  // Default end-of-session work for a Cowork session: a wiki summary (so it
+  // shows up in hivemind_index) AND a skillify mining pass — exactly what the
+  // claude_code SessionEnd hook does. Each is independent and best-effort.
   const doSpawn: SpawnSummaryFn =
     spawn ??
-    ((sessionId) =>
-      spawnWikiWorker({
-        config,
-        sessionId,
-        cwd: `/${COWORK_PROJECT}`,
-        bundleDir,
-        reason: "CoworkIdle",
-        agent: COWORK_AGENT,
-      }));
+    ((sessionId) => {
+      try {
+        spawnWikiWorker({ config, sessionId, cwd: `/${COWORK_PROJECT}`, bundleDir, reason: "CoworkIdle", agent: COWORK_AGENT });
+      } catch (e: unknown) {
+        log("cowork-ingest", `summary spawn skipped for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      try {
+        forceSessionEndTrigger({ config, cwd: `/${COWORK_PROJECT}`, bundleDir, agent: COWORK_AGENT, sessionId });
+      } catch (e: unknown) {
+        log("cowork-ingest", `skillify trigger skipped for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
   state.summarizedLines ??= {};
 
   for (const path of Object.keys(state.processedLines)) {
@@ -298,9 +305,9 @@ export function summarizeIdleSessions(
     try {
       doSpawn(sessionId);
       state.summarizedLines[path] = processed;
-      log("cowork-ingest", `spawned summary worker for idle Cowork session ${sessionId}`);
+      log("cowork-ingest", `ran end-of-session work (summary + skillify) for idle Cowork session ${sessionId}`);
     } catch (e: unknown) {
-      log("cowork-ingest", `summary spawn skipped for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`);
+      log("cowork-ingest", `idle-session work failed for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }

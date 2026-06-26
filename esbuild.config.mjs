@@ -506,10 +506,15 @@ chmodSync("harnesses/openclaw/dist/skillify-worker.js", 0o755);
 // Hivemind MCP server (stdio). Reused by Cline / Roo / Kilo / any MCP-aware
 // agent. Lives at ~/.hivemind/mcp/server.js after install.
 await build({
-  // wiki-worker ships alongside the server so the Cowork ingester can spawn it
-  // to summarize idle Cowork sessions (Cowork has no SessionEnd hook). install
-  // copies the whole mcp/bundle dir, so adding the entry is enough to deliver it.
-  entryPoints: { server: "dist/src/mcp/server.js", "wiki-worker": "dist/src/hooks/wiki-worker.js" },
+  // wiki-worker + skillify-worker ship alongside the server so the Cowork
+  // ingester can spawn them for idle Cowork sessions (Cowork has no SessionEnd
+  // hook). install copies the whole mcp/bundle dir, so adding the entries is
+  // enough to deliver them at ~/.hivemind/mcp/.
+  entryPoints: {
+    server: "dist/src/mcp/server.js",
+    "wiki-worker": "dist/src/hooks/wiki-worker.js",
+    "skillify-worker": "dist/src/skillify/skillify-worker.js",
+  },
   bundle: true,
   platform: "node",
   format: "esm",
@@ -519,6 +524,7 @@ await build({
 });
 chmodSync("mcp/bundle/server.js", 0o755);
 chmodSync("mcp/bundle/wiki-worker.js", 0o755);
+chmodSync("mcp/bundle/skillify-worker.js", 0o755);
 writeFileSync("mcp/bundle/package.json", esmPackageJson);
 
 // Unified CLI (`npx hivemind install` … single entrypoint for all assistants)
