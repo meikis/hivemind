@@ -23,6 +23,7 @@ import { isMissingTableError } from "../deeplake-schema.js";
 import { sqlStr, sqlLike } from "../utils/sql.js";
 import { searchDeeplakeTables, buildGrepSearchOptions, normalizeContent, TRUNCATION_NOTICE, type GrepMatchParams } from "../shell/grep-core.js";
 import { getVersion } from "../cli/version.js";
+import { startCoworkIngestLoop } from "./cowork-ingest.js";
 
 interface ServerContext {
   api: DeeplakeApi;
@@ -186,6 +187,10 @@ server.registerTool(
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Cowork has no capture hooks — tail its local transcripts and write them
+  // to the sessions table so Cowork conversations become shared memory too.
+  // Best-effort and self-throttling; never touches the stdio channel.
+  startCoworkIngestLoop();
 }
 
 main().catch((err) => {

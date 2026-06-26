@@ -1,0 +1,282 @@
+/**
+ * Cowork session ingester.
+ *
+ * Claude Cowork (Anthropic's desktop Local Agent Mode) has no hook lifecycle
+ * like Claude Code — it only talks to us through the MCP server, and that
+ * channel is read-only (search/read/index). So Cowork conversations would
+ * never land in Deeplake on their own.
+ *
+ * Cowork's Local Agent Mode runs a real Claude Code instance under the hood
+ * and writes standard Claude-Code transcript JSONL to:
+ *   <claudeDesktopConfigDir>/local-agent-mode-sessions/**​/.claude/projects/<enc>/<sessionId>.jsonl
+ *
+ * This module tails those transcripts and writes each new user/assistant
+ * message into the shared `sessions` table with agent = "claude_cowork",
+ * so Cowork sessions become first-class shared memory like every other agent.
+ *
+ * It runs piggy-backed on the MCP server (which is spawned in every Cowork
+ * session), so no extra install step is needed. A per-transcript line
+ * watermark prevents re-ingesting old events; a lock file prevents the
+ * several concurrent MCP processes Cowork spawns from double-inserting.
+ */
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { loadCredentials } from "../commands/auth.js";
+import { loadConfig } from "../config.js";
+import { DeeplakeApi } from "../deeplake-api.js";
+import { claudeDesktopConfigDir } from "../cli/util.js";
+import { getVersion } from "../cli/version.js";
+import {
+  appendQueuedSessionRow,
+  buildQueuedSessionRow,
+  buildSessionPath,
+  drainSessionQueues,
+} from "../hooks/session-queue.js";
+import { log } from "../utils/debug.js";
+
+/** Value written to the `agent` column for Cowork-originated rows. */
+export const COWORK_AGENT = "claude_cowork";
+/** `project` column value — lets Cowork rows be filtered without a JSON dig. */
+const COWORK_PROJECT = "claude_cowork";
+
+const DEEPLAKE_DIR = join(homedir(), ".deeplake");
+const STATE_PATH = join(DEEPLAKE_DIR, "cowork-ingest-state.json");
+const LOCK_PATH = join(DEEPLAKE_DIR, ".cowork-ingest.lock");
+const COWORK_QUEUE_DIR = join(DEEPLAKE_DIR, "queue-cowork");
+const LOCK_STALE_MS = 60_000;
+
+interface IngestState {
+  /** transcript absolute path → number of lines already ingested. */
+  processedLines: Record<string, number>;
+}
+
+export interface TranscriptLine {
+  type?: string;
+  sessionId?: string;
+  timestamp?: string;
+  cwd?: string;
+  message?: { role?: string; content?: unknown };
+}
+
+function coworkSessionsRoot(): string {
+  return join(claudeDesktopConfigDir(), "local-agent-mode-sessions");
+}
+
+/** Recursively collect Claude-Code transcript JSONL files under a dir. */
+function findTranscripts(root: string): string[] {
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      const full = join(dir, name);
+      let isDir = false;
+      try {
+        isDir = statSync(full).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) {
+        walk(full);
+      } else if (
+        name.endsWith(".jsonl") &&
+        full.includes("/.claude/projects/") &&
+        /^[0-9a-f-]{36}\.jsonl$/i.test(name)
+      ) {
+        out.push(full);
+      }
+    }
+  };
+  walk(root);
+  return out;
+}
+
+function loadState(): IngestState {
+  try {
+    const raw = JSON.parse(readFileSync(STATE_PATH, "utf-8"));
+    if (raw && typeof raw === "object" && raw.processedLines) return raw as IngestState;
+  } catch {
+    /* fresh state */
+  }
+  return { processedLines: {} };
+}
+
+function saveState(state: IngestState): void {
+  mkdirSync(DEEPLAKE_DIR, { recursive: true });
+  writeFileSync(STATE_PATH, JSON.stringify(state));
+}
+
+/** Flatten a Claude-Code message content into plain text. */
+export function extractText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((block) => {
+        if (block && typeof block === "object" && (block as { type?: string }).type === "text") {
+          return String((block as { text?: string }).text ?? "");
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+/** Map one transcript line to a sessions-table message entry, or null to skip. */
+export function entryForLine(line: TranscriptLine): Record<string, unknown> | null {
+  if (!line.sessionId) return null;
+  const ts = line.timestamp ?? new Date().toISOString();
+  const base = { session_id: line.sessionId, timestamp: ts, cwd: line.cwd, agent: COWORK_AGENT };
+
+  if (line.type === "user") {
+    const content = extractText(line.message?.content);
+    if (!content.trim()) return null;
+    return { id: crypto.randomUUID(), ...base, type: "user_message", content };
+  }
+  if (line.type === "assistant") {
+    const content = extractText(line.message?.content);
+    if (!content.trim()) return null; // pure thinking / tool_use turns carry no message
+    return { id: crypto.randomUUID(), ...base, type: "assistant_message", content };
+  }
+  return null;
+}
+
+function tryAcquireLock(): (() => void) | null {
+  mkdirSync(DEEPLAKE_DIR, { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(LOCK_PATH, "wx");
+      closeSync(fd);
+      return () => rmSync(LOCK_PATH, { force: true });
+    } catch (e: unknown) {
+      if ((e as { code?: string }).code !== "EEXIST") return null;
+      try {
+        if (Date.now() - statSync(LOCK_PATH).mtimeMs >= LOCK_STALE_MS) {
+          rmSync(LOCK_PATH, { force: true });
+          continue;
+        }
+      } catch {
+        /* lock vanished — retry */
+      }
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Tail Cowork transcripts and write new messages to the sessions table.
+ * Safe to call repeatedly; never throws and never writes to stdout (which
+ * would corrupt the MCP stdio channel).
+ */
+export async function ingestCoworkSessions(): Promise<{ ingested: number } | { skipped: string }> {
+  if (process.env.HIVEMIND_CAPTURE === "false") return { skipped: "capture-disabled" };
+
+  const root = coworkSessionsRoot();
+  if (!existsSync(root)) return { skipped: "no-cowork-sessions" };
+
+  const creds = loadCredentials();
+  if (!creds?.token) return { skipped: "not-authenticated" };
+  const config = loadConfig();
+  if (!config) return { skipped: "no-config" };
+
+  const release = tryAcquireLock();
+  if (!release) return { skipped: "busy" };
+
+  let ingested = 0;
+  try {
+    const state = loadState();
+    const transcripts = findTranscripts(root);
+    let appendedAny = false;
+
+    for (const path of transcripts) {
+      let lines: string[];
+      try {
+        lines = readFileSync(path, "utf-8").split("\n").filter(Boolean);
+      } catch {
+        continue;
+      }
+      const already = state.processedLines[path] ?? 0;
+      if (lines.length <= already) continue;
+
+      for (const raw of lines.slice(already)) {
+        let parsed: TranscriptLine;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        const entry = entryForLine(parsed);
+        if (!entry) continue;
+
+        const serialized = JSON.stringify(entry);
+        const row = buildQueuedSessionRow({
+          sessionPath: buildSessionPath(config, String(entry.session_id)),
+          line: serialized,
+          userName: config.userName,
+          projectName: COWORK_PROJECT,
+          description: String(entry.type ?? ""),
+          agent: COWORK_AGENT,
+          pluginVersion: getVersion(),
+          timestamp: String(entry.timestamp),
+        });
+        appendQueuedSessionRow(row, COWORK_QUEUE_DIR);
+        appendedAny = true;
+        ingested += 1;
+      }
+      state.processedLines[path] = lines.length;
+    }
+
+    saveState(state);
+
+    if (appendedAny) {
+      const api = new DeeplakeApi(
+        config.token,
+        config.apiUrl,
+        config.orgId,
+        config.workspaceId,
+        config.sessionsTableName,
+      );
+      await drainSessionQueues(api, {
+        sessionsTable: config.sessionsTableName,
+        queueDir: COWORK_QUEUE_DIR,
+      });
+    }
+
+    if (ingested > 0) log("cowork-ingest", `ingested ${ingested} message(s) from Cowork transcripts`);
+    return { ingested };
+  } catch (e: unknown) {
+    log("cowork-ingest", `error: ${e instanceof Error ? e.message : String(e)}`);
+    return { ingested };
+  } finally {
+    release();
+  }
+}
+
+/**
+ * Start background ingestion: once on startup, then on an interval. The timer
+ * is unref'd so it never keeps the MCP process alive on its own.
+ */
+export function startCoworkIngestLoop(intervalMs = 30_000): void {
+  void ingestCoworkSessions();
+  const timer = setInterval(() => {
+    void ingestCoworkSessions();
+  }, intervalMs);
+  timer.unref?.();
+}

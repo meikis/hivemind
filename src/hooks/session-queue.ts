@@ -128,7 +128,12 @@ export function buildSessionInsertSql(sessionsTable: string, rows: QueuedSession
   if (rows.length === 0) throw new Error("buildSessionInsertSql: rows must not be empty");
   const table = sqlIdent(sessionsTable);
   const values = rows.map((row) => {
-    const jsonForSql = sqlStr(coerceJsonbPayload(row.message));
+    // Escape ONLY single quotes for the SQL literal. The payload is already
+    // valid JSON and Postgres (standard_conforming_strings) treats backslashes
+    // literally, so sqlStr()'s backslash-doubling and control-char stripping
+    // would corrupt the JSON and the jsonb cast would 400. Mirrors the
+    // capture.ts direct-INSERT path.
+    const jsonForSql = coerceJsonbPayload(row.message).replace(/'/g, "''");
     return (
       `('${sqlStr(row.id)}', '${sqlStr(row.path)}', '${sqlStr(row.filename)}', '${jsonForSql}'::jsonb, ` +
       `'${sqlStr(row.author)}', ${row.sizeBytes}, '${sqlStr(row.project)}', '${sqlStr(row.description)}', ` +
