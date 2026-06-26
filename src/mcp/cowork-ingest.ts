@@ -54,7 +54,33 @@ const DEEPLAKE_DIR = join(homedir(), ".deeplake");
 const STATE_PATH = join(DEEPLAKE_DIR, "cowork-ingest-state.json");
 const LOCK_PATH = join(DEEPLAKE_DIR, ".cowork-ingest.lock");
 const COWORK_QUEUE_DIR = join(DEEPLAKE_DIR, "queue-cowork");
+const NOTICE_MARKER = join(DEEPLAKE_DIR, ".cowork-data-notice-shown");
 const LOCK_STALE_MS = 60_000;
+
+const DATA_NOTICE =
+  "ℹ️ Hivemind data notice: this Cowork session is being saved to your team's shared Deeplake memory " +
+  "(your prompts, the assistant's responses, and tool calls) so agents and teammates can recall it later. " +
+  "Everyone in your Deeplake workspace can read it. To turn capture off, set HIVEMIND_CAPTURE=false. " +
+  "(This notice is shown once.)";
+
+/**
+ * One-time consent/data notice for Cowork. Cowork has no SessionStart banner,
+ * so the only place we can surface this is the first hivemind tool result.
+ * Returns the notice text exactly once (guarded by a marker file), and only
+ * when Cowork capture is actually active; "" otherwise.
+ */
+export function coworkDataNoticeOnce(): string {
+  try {
+    if (process.env.HIVEMIND_CAPTURE === "false") return "";
+    if (!existsSync(coworkSessionsRoot())) return ""; // not a Cowork host → nothing captured
+    if (existsSync(NOTICE_MARKER)) return "";
+    mkdirSync(DEEPLAKE_DIR, { recursive: true });
+    writeFileSync(NOTICE_MARKER, new Date().toISOString());
+    return `${DATA_NOTICE}\n\n`;
+  } catch {
+    return "";
+  }
+}
 
 interface IngestState {
   /** transcript absolute path → number of lines already ingested. */
@@ -138,23 +164,63 @@ export function extractText(content: unknown): string {
   return "";
 }
 
-/** Map one transcript line to a sessions-table message entry, or null to skip. */
-export function entryForLine(line: TranscriptLine): Record<string, unknown> | null {
-  if (!line.sessionId) return null;
+function isBlock(b: unknown): b is { type?: string; [k: string]: unknown } {
+  return !!b && typeof b === "object";
+}
+
+/**
+ * Map one transcript line to zero or more sessions-table message entries.
+ * Captures user prompts, assistant text, assistant tool calls, and the
+ * matching tool results — parity with the claude_code capture hook.
+ */
+export function entriesForLine(line: TranscriptLine): Record<string, unknown>[] {
+  if (!line.sessionId) return [];
   const ts = line.timestamp ?? new Date().toISOString();
   const base = { session_id: line.sessionId, timestamp: ts, cwd: line.cwd, agent: COWORK_AGENT };
+  const content = line.message?.content;
+  const out: Record<string, unknown>[] = [];
 
   if (line.type === "user") {
-    const content = extractText(line.message?.content);
-    if (!content.trim()) return null;
-    return { id: crypto.randomUUID(), ...base, type: "user_message", content };
+    // Tool results come back as user lines carrying tool_result blocks.
+    if (Array.isArray(content)) {
+      for (const b of content) {
+        if (isBlock(b) && b.type === "tool_result") {
+          out.push({
+            id: crypto.randomUUID(),
+            ...base,
+            type: "tool_result",
+            tool_use_id: b.tool_use_id,
+            tool_response: JSON.stringify(b.content ?? null),
+          });
+        }
+      }
+    }
+    const text = extractText(content);
+    if (text.trim()) out.push({ id: crypto.randomUUID(), ...base, type: "user_message", content: text });
+    return out;
   }
+
   if (line.type === "assistant") {
-    const content = extractText(line.message?.content);
-    if (!content.trim()) return null; // pure thinking / tool_use turns carry no message
-    return { id: crypto.randomUUID(), ...base, type: "assistant_message", content };
+    const text = extractText(content);
+    if (text.trim()) out.push({ id: crypto.randomUUID(), ...base, type: "assistant_message", content: text });
+    if (Array.isArray(content)) {
+      for (const b of content) {
+        if (isBlock(b) && b.type === "tool_use") {
+          out.push({
+            id: crypto.randomUUID(),
+            ...base,
+            type: "tool_call",
+            tool_name: b.name,
+            tool_use_id: b.id,
+            tool_input: JSON.stringify(b.input ?? null),
+          });
+        }
+      }
+    }
+    return out;
   }
-  return null;
+
+  return out;
 }
 
 function tryAcquireLock(): (() => void) | null {
@@ -222,23 +288,22 @@ export async function ingestCoworkSessions(): Promise<{ ingested: number } | { s
         } catch {
           continue;
         }
-        const entry = entryForLine(parsed);
-        if (!entry) continue;
-
-        const serialized = JSON.stringify(entry);
-        const row = buildQueuedSessionRow({
-          sessionPath: buildSessionPath(config, String(entry.session_id)),
-          line: serialized,
-          userName: config.userName,
-          projectName: COWORK_PROJECT,
-          description: String(entry.type ?? ""),
-          agent: COWORK_AGENT,
-          pluginVersion: getVersion(),
-          timestamp: String(entry.timestamp),
-        });
-        appendQueuedSessionRow(row, COWORK_QUEUE_DIR);
-        appendedAny = true;
-        ingested += 1;
+        for (const entry of entriesForLine(parsed)) {
+          const serialized = JSON.stringify(entry);
+          const row = buildQueuedSessionRow({
+            sessionPath: buildSessionPath(config, String(entry.session_id)),
+            line: serialized,
+            userName: config.userName,
+            projectName: COWORK_PROJECT,
+            description: String(entry.type ?? ""),
+            agent: COWORK_AGENT,
+            pluginVersion: getVersion(),
+            timestamp: String(entry.timestamp),
+          });
+          appendQueuedSessionRow(row, COWORK_QUEUE_DIR);
+          appendedAny = true;
+          ingested += 1;
+        }
       }
       state.processedLines[path] = lines.length;
     }

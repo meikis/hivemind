@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { entryForLine, extractText, COWORK_AGENT } from "../../src/mcp/cowork-ingest.js";
+import { entriesForLine, extractText, coworkDataNoticeOnce, COWORK_AGENT } from "../../src/mcp/cowork-ingest.js";
+
+type Line = Parameters<typeof entriesForLine>[0];
+const firstEntry = (line: Line) => entriesForLine(line)[0] ?? null;
 
 describe("extractText", () => {
   it("returns a plain string unchanged", () => {
@@ -22,7 +25,7 @@ describe("extractText", () => {
   });
 });
 
-describe("entryForLine", () => {
+describe("entriesForLine", () => {
   const base = {
     sessionId: "b27efa59-a8bc-4ea3-8b02-18cbc608ae17",
     timestamp: "2026-06-26T15:02:13.529Z",
@@ -30,8 +33,7 @@ describe("entryForLine", () => {
   };
 
   it("maps a user line to a user_message entry tagged as Cowork", () => {
-    const entry = entryForLine({ ...base, type: "user", message: { content: "ciao" } });
-    expect(entry).toMatchObject({
+    expect(firstEntry({ ...base, type: "user", message: { content: "ciao" } })).toMatchObject({
       session_id: base.sessionId,
       timestamp: base.timestamp,
       type: "user_message",
@@ -41,30 +43,78 @@ describe("entryForLine", () => {
   });
 
   it("maps an assistant line with text blocks to an assistant_message entry", () => {
-    const entry = entryForLine({
+    expect(firstEntry({
       ...base,
       type: "assistant",
       message: { content: [{ type: "text", text: "risposta" }] },
-    });
-    expect(entry).toMatchObject({ type: "assistant_message", content: "risposta", agent: COWORK_AGENT });
+    })).toMatchObject({ type: "assistant_message", content: "risposta", agent: COWORK_AGENT });
   });
 
-  it("skips assistant turns that carry no text (pure thinking / tool_use)", () => {
-    const entry = entryForLine({
+  it("emits a tool_call entry for each assistant tool_use block", () => {
+    const entries = entriesForLine({
+      ...base,
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "let me search" },
+          { type: "tool_use", id: "toolu_1", name: "hivemind_search", input: { query: "x" } },
+        ],
+      },
+    });
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ type: "assistant_message", content: "let me search" });
+    expect(entries[1]).toMatchObject({
+      type: "tool_call",
+      tool_name: "hivemind_search",
+      tool_use_id: "toolu_1",
+      tool_input: JSON.stringify({ query: "x" }),
+      agent: COWORK_AGENT,
+    });
+  });
+
+  it("emits a tool_result entry for a user tool_result block", () => {
+    const entries = entriesForLine({
+      ...base,
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "rows=5" }] },
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      type: "tool_result",
+      tool_use_id: "toolu_1",
+      tool_response: JSON.stringify("rows=5"),
+      agent: COWORK_AGENT,
+    });
+  });
+
+  it("skips assistant turns that carry no text and no tool calls (pure thinking)", () => {
+    expect(entriesForLine({
       ...base,
       type: "assistant",
       message: { content: [{ type: "thinking", thinking: "x" }] },
-    });
-    expect(entry).toBeNull();
+    })).toEqual([]);
   });
 
   it("skips empty user messages and non-message line types", () => {
-    expect(entryForLine({ ...base, type: "user", message: { content: "   " } })).toBeNull();
-    expect(entryForLine({ ...base, type: "queue-operation" })).toBeNull();
-    expect(entryForLine({ ...base, type: "attachment" })).toBeNull();
+    expect(entriesForLine({ ...base, type: "user", message: { content: "   " } })).toEqual([]);
+    expect(entriesForLine({ ...base, type: "queue-operation" })).toEqual([]);
+    expect(entriesForLine({ ...base, type: "attachment" })).toEqual([]);
   });
 
   it("skips lines without a sessionId", () => {
-    expect(entryForLine({ type: "user", message: { content: "hi" } })).toBeNull();
+    expect(entriesForLine({ type: "user", message: { content: "hi" } })).toEqual([]);
+  });
+});
+
+describe("coworkDataNoticeOnce", () => {
+  it("returns empty string when capture is disabled (no fs side effects)", () => {
+    const prev = process.env.HIVEMIND_CAPTURE;
+    process.env.HIVEMIND_CAPTURE = "false";
+    try {
+      expect(coworkDataNoticeOnce()).toBe("");
+    } finally {
+      if (prev === undefined) delete process.env.HIVEMIND_CAPTURE;
+      else process.env.HIVEMIND_CAPTURE = prev;
+    }
   });
 });
