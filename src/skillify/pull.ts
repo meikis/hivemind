@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { assertValidSkillName, parseFrontmatter, type SkillFrontmatter } from "./skill-writer.js";
+import { assertValidSkillName, composeDescription, parseFrontmatter, type SkillFrontmatter } from "./skill-writer.js";
 import type { InstallLocation } from "./scope-config.js";
 import { entriesForRoot, loadManifest, pruneOrphanedEntries, recordPull } from "./manifest.js";
 import { detectAgentSkillsRoots } from "./agent-roots.js";
@@ -394,7 +394,10 @@ function parseContributors(v: unknown): string[] {
 function renderFrontmatter(fm: SkillFrontmatter): string {
   const lines: string[] = ["---"];
   lines.push(`name: ${fm.name}`);
-  lines.push(`description: ${JSON.stringify(fm.description)}`);
+  // Fold the trigger into the host-visible description (see composeDescription).
+  // Because pull re-renders from table columns on every sync, this also
+  // retroactively fixes skills mined before the trigger lived in `description`.
+  lines.push(`description: ${JSON.stringify(composeDescription(fm.description, fm.trigger))}`);
   if (fm.trigger) lines.push(`trigger: ${JSON.stringify(fm.trigger)}`);
   if (fm.author) lines.push(`author: ${fm.author}`);
   lines.push(`source_sessions:`);

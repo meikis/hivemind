@@ -5,6 +5,7 @@ import { tmpdir, homedir } from "node:os";
 import {
   writeNewSkill,
   mergeSkill,
+  composeDescription,
   parseFrontmatter,
   listSkills,
   resolveSkillsRoot,
@@ -47,7 +48,9 @@ describe("writeNewSkill", () => {
 
     const text = readFileSync(result.path, "utf-8");
     expect(text).toContain("name: my-skill");
-    expect(text).toContain(`description: "Does X"`);
+    // The trigger is folded into the host-visible description (the host reads
+    // `description`, not `trigger`); the raw trigger field is still written.
+    expect(text).toContain(`description: "Does X. Use this skill when X happens"`);
     expect(text).toContain(`trigger: "When X happens"`);
     expect(text).toContain("version: 1");
     expect(text).toContain("created_by_agent: claude_code");
@@ -134,6 +137,50 @@ describe("mergeSkill", () => {
     mergeSkill({ skillsRoot, name: "t", body: "new body", newSourceSessions: [], agent: "x" });
     const text = readFileSync(join(skillsRoot, "t", "SKILL.md"), "utf-8");
     expect(text).toContain(`trigger: "original trigger"`);
+  });
+});
+
+describe("composeDescription (trigger → host-visible description)", () => {
+  it("folds the trigger into the description as a 'Use this skill when' clause", () => {
+    expect(composeDescription("Diagnose pg crashes", "When task pg:test cascades"))
+      .toBe("Diagnose pg crashes. Use this skill when task pg:test cascades");
+  });
+
+  it("normalizes 'Use when X' / 'Use this skill when X' to a single clause", () => {
+    expect(composeDescription("Build kernels", "Use when auditing CUDA paths"))
+      .toBe("Build kernels. Use this skill when auditing CUDA paths");
+    expect(composeDescription("Build kernels", "Use this skill when auditing CUDA paths"))
+      .toBe("Build kernels. Use this skill when auditing CUDA paths");
+  });
+
+  it("returns the description unchanged when there is no trigger", () => {
+    expect(composeDescription("Just a capability", "")).toBe("Just a capability");
+    expect(composeDescription("Just a capability", undefined)).toBe("Just a capability");
+  });
+
+  it("returns just the trigger clause when the description is empty", () => {
+    expect(composeDescription("", "When SDK open_table crashes"))
+      .toBe("Use this skill when SDK open_table crashes");
+  });
+
+  it("is idempotent — re-composing an already-composed description is a no-op", () => {
+    const once = composeDescription("Does X", "When Y happens");
+    expect(composeDescription(once, "When Y happens")).toBe(once);
+    // even when the trigger is re-phrased differently on a later render
+    expect(composeDescription(once, "Use when Y happens")).toBe(once);
+  });
+
+  it("does not stack the clause across a writeNewSkill → mergeSkill roundtrip", () => {
+    writeNewSkill({
+      skillsRoot, name: "rt", description: "Capability", trigger: "When the thing breaks",
+      body: VALID_BODY, sourceSessions: [], agent: "x",
+    });
+    mergeSkill({ skillsRoot, name: "rt", body: "new body", newSourceSessions: [], agent: "x" });
+    const text = readFileSync(join(skillsRoot, "rt", "SKILL.md"), "utf-8");
+    // exactly one occurrence — in the description line; the trigger field keeps
+    // the raw "When the thing breaks" phrasing.
+    expect((text.match(/Use this skill when/g) ?? []).length).toBe(1);
+    expect(text).toContain(`description: "Capability. Use this skill when the thing breaks"`);
   });
 });
 
