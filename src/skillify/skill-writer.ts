@@ -123,11 +123,34 @@ function skillPath(skillsRoot: string, name: string): string {
   return join(skillDir(skillsRoot, name), "SKILL.md");
 }
 
+/**
+ * Fold the activation condition into the description the host agent actually
+ * reads. Claude Code / Codex surface only `name` + `description` when deciding
+ * whether to invoke a skill — the `trigger` frontmatter field is custom and
+ * never reaches the model. So a well-written trigger is invisible to skill
+ * selection unless it also lives in `description`. Idempotent: composing an
+ * already-composed description is a no-op, so it survives the
+ * parse → merge → re-render roundtrip without stacking duplicate clauses.
+ */
+export function composeDescription(description: string, trigger?: string): string {
+  const desc = (description ?? "").trim();
+  const trig = (trigger ?? "").trim();
+  if (!trig) return desc;
+  // Already composed, or the description is itself phrased as a trigger.
+  if (desc.includes(trig) || /use this skill when/i.test(desc)) return desc;
+  // Normalize common trigger phrasings ("Use when X" / "When X") to one clause.
+  const condition = trig.replace(/^(use this skill when|use when|when)\s+/i, "");
+  const tail = `Use this skill when ${condition}`;
+  if (!desc) return tail;
+  const lead = /[.!?]$/.test(desc) ? desc : `${desc}.`;
+  return `${lead} ${tail}`;
+}
+
 /** Render YAML-ish frontmatter. Conservative quoting — no embedded newlines. */
 function renderFrontmatter(fm: SkillFrontmatter): string {
   const lines: string[] = ["---"];
   lines.push(`name: ${fm.name}`);
-  lines.push(`description: ${JSON.stringify(fm.description)}`);
+  lines.push(`description: ${JSON.stringify(composeDescription(fm.description, fm.trigger))}`);
   if (fm.trigger) lines.push(`trigger: ${JSON.stringify(fm.trigger)}`);
   if (fm.author) lines.push(`author: ${fm.author}`);
   lines.push(`source_sessions:`);

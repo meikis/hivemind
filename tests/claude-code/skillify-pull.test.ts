@@ -306,7 +306,8 @@ describe("renderSkillFile", () => {
       body: "## Workflow\n\nDo it.",
     });
     expect(text).toContain("name: my-skill");
-    expect(text).toContain(`description: "Does X"`);
+    // Pull folds the trigger into the host-visible description (composeDescription).
+    expect(text).toContain(`description: "Does X. Use this skill when X"`);
     expect(text).toContain(`trigger: "When X"`);
     expect(text).toContain("version: 2");
     expect(text).toContain("created_by_agent: claude_code");
@@ -332,6 +333,24 @@ describe("renderSkillFile", () => {
     // Frontmatter should still render — just with empty list
     expect(text).toContain("source_sessions:\n");
     expect(text).not.toContain("- not json");
+  });
+
+  it("retroactively folds a separate trigger_text into description on reconstruction", () => {
+    // A row mined before the fix has a capability-only description and the
+    // condition stranded in trigger_text. Because pull re-renders from columns
+    // on every sync, the host-visible description gains the trigger with no
+    // table backfill.
+    const text = renderSkillFile({
+      name: "pg-crash",
+      description: "Diagnose pg-deeplake test-suite crashes",
+      trigger_text: "When task pg:test cascades after one crash",
+      source_sessions: [], version: 5,
+      source_agent: "codex", created_at: "t", updated_at: "t",
+      body: "## Workflow\n\nDo it.",
+    });
+    expect(text).toContain(
+      `description: "Diagnose pg-deeplake test-suite crashes. Use this skill when task pg:test cascades after one crash"`,
+    );
   });
 
   it("omits trigger field when trigger_text is empty", () => {
