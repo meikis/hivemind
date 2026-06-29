@@ -188,6 +188,24 @@ export async function runRulesCommand(args: string[]): Promise<void> {
   if (sub === "list") {
     const status = parseStatus(args.slice(1));
     const limit = parseLimit(args.slice(1));
+
+    // Skip the SELECT entirely when we can prove the table doesn't exist.
+    // `list` (unlike the write subcommands) never runs ensureRulesTable, so an
+    // org that has only ever listed rules has no hivemind_rules table. Firing
+    // the doomed SELECT logs a 42P01 ERROR on the server for every list and
+    // SessionStart inject (fleet-wide: thousands/day), and because the server
+    // streams query results the missing-table error can reach the client as an
+    // opaque "fetch failed" instead of a clean empty list. A cheap table lookup
+    // avoids both. knownTablesOrNull() returns null when the lookup itself was
+    // untrustworthy (a network blip): in that case we fall through to the
+    // SELECT-then-catch path below so a transient hiccup never hides a table
+    // that really exists.
+    const knownTables = await api.knownTablesOrNull();
+    if (knownTables !== null && !knownTables.includes(tableName)) {
+      console.log(`(no rules with status=${status})`);
+      return;
+    }
+
     let rows: RuleRow[] = [];
     try {
       rows = await listRules(api.query.bind(api), tableName, { status, limit });
