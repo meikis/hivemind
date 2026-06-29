@@ -79,9 +79,16 @@ export function coworkDataNoticeOnce(): string {
   try {
     if (process.env.HIVEMIND_CAPTURE === "false") return "";
     if (!existsSync(coworkSessionsRoot())) return ""; // not a Cowork host → nothing captured
-    if (existsSync(NOTICE_MARKER)) return "";
     mkdirSync(DEEPLAKE_DIR, { recursive: true });
-    writeFileSync(NOTICE_MARKER, new Date().toISOString());
+    // Atomic create-exclusive: the first caller to win the `wx` open writes the
+    // marker and returns the notice; a racing Cowork process gets EEXIST and
+    // returns "". Replaces a check-then-write (existsSync + writeFileSync) that
+    // CodeQL flagged as a file-system race (js/file-system-race).
+    try {
+      writeFileSync(NOTICE_MARKER, new Date().toISOString(), { flag: "wx" });
+    } catch {
+      return ""; // marker already present (or unwritable) → notice already shown
+    }
     return `${DATA_NOTICE}\n\n`;
   } catch {
     return "";
@@ -129,7 +136,9 @@ function findTranscripts(root: string): string[] {
         walk(full);
       } else if (
         name.endsWith(".jsonl") &&
-        full.includes("/.claude/projects/") &&
+        // Separator-agnostic so Windows transcript paths (\\.claude\\projects\\)
+        // match too — otherwise ingest is a silent no-op on Windows hosts.
+        /[\\/]\.claude[\\/]projects[\\/]/.test(full) &&
         /^[0-9a-f-]{36}\.jsonl$/i.test(name)
       ) {
         out.push(full);
