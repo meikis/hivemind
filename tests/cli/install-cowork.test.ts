@@ -116,7 +116,11 @@ describe("installCowork", () => {
     writeFileSync(configPath, "{ not valid json ");
 
     const { installCowork } = await importCowork();
-    expect(() => installCowork()).toThrow(/not valid JSON/);
+    // Assert the full actionable message (path included), not just a substring —
+    // so a regression in the path-bearing guidance is caught too.
+    expect(() => installCowork()).toThrow(
+      `claude_desktop_config.json at ${configPath} is not valid JSON. Fix or remove it, then rerun.`,
+    );
     // The user's file is left untouched.
     expect(readFileSync(configPath, "utf-8")).toBe("{ not valid json ");
   });
