@@ -3,6 +3,7 @@ import { installCodex, uninstallCodex } from "./install-codex.js";
 import { installOpenclaw, uninstallOpenclaw } from "./install-openclaw.js";
 import { installCursor, uninstallCursor } from "./install-cursor.js";
 import { installHermes, uninstallHermes } from "./install-hermes.js";
+import { installCowork, uninstallCowork } from "./install-cowork.js";
 import { installPi, uninstallPi } from "./install-pi.js";
 import {
   disableEmbeddings,
@@ -65,6 +66,7 @@ Usage:
   hivemind claw    install | uninstall
   hivemind cursor  install | uninstall
   hivemind hermes  install | uninstall
+  hivemind claude_cowork install | uninstall
   hivemind pi      install | uninstall
       Install or remove hivemind for a specific assistant.
 
@@ -366,7 +368,7 @@ async function runInstallAll(args: string[]): Promise<void> {
 
   if (targets.length === 0) {
     log("No supported assistants detected.");
-    log("Supported: Claude Code, Codex, OpenClaw, Cursor, Hermes Agent.");
+    log("Supported: Claude Code, Codex, OpenClaw, Cursor, Hermes Agent, Pi, Claude Cowork.");
     log("Install one and rerun `hivemind install`, or target a specific assistant: `hivemind cursor install`.");
     return;
   }
@@ -410,6 +412,7 @@ function runSingleInstall(id: PlatformId): void {
     else if (id === "cursor") installCursor();
     else if (id === "hermes") installHermes();
     else if (id === "pi") installPi();
+    else if (id === "claude_cowork") installCowork();
   } catch (err) {
     warn(`  ${id.padEnd(14)} FAILED: ${(err as Error).message}`);
   }
@@ -423,6 +426,7 @@ function runSingleUninstall(id: PlatformId): void {
     else if (id === "cursor") uninstallCursor();
     else if (id === "hermes") uninstallHermes();
     else if (id === "pi") uninstallPi();
+    else if (id === "claude_cowork") uninstallCowork();
   } catch (err) {
     warn(`  ${id.padEnd(14)} FAILED: ${(err as Error).message}`);
   }
@@ -541,7 +545,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const platformCmds: PlatformId[] = ["claude", "codex", "claw", "cursor", "hermes", "pi"];
+  const platformCmds: PlatformId[] = ["claude", "codex", "claw", "cursor", "hermes", "pi", "claude_cowork"];
   if (platformCmds.includes(cmd as PlatformId)) {
     const sub = args[1];
     if (sub === "install") {

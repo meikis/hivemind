@@ -23,6 +23,7 @@ import { isMissingTableError } from "../deeplake-schema.js";
 import { sqlStr, sqlLike } from "../utils/sql.js";
 import { searchDeeplakeTables, buildGrepSearchOptions, normalizeContent, TRUNCATION_NOTICE, type GrepMatchParams } from "../shell/grep-core.js";
 import { getVersion } from "../cli/version.js";
+import { startCoworkIngestLoop, coworkDataNoticeOnce } from "./cowork-ingest.js";
 
 interface ServerContext {
   api: DeeplakeApi;
@@ -45,6 +46,14 @@ function getContext(): ServerContext | { error: string } {
 
 function errorResult(text: string): { content: Array<{ type: "text"; text: string }> } {
   return { content: [{ type: "text", text }] };
+}
+
+/**
+ * Successful tool result. Prepends the one-time Cowork data notice when
+ * running inside a Cowork host (no-op everywhere else and after first use).
+ */
+function okResult(text: string): { content: Array<{ type: "text"; text: string }> } {
+  return { content: [{ type: "text", text: coworkDataNoticeOnce() + text }] };
 }
 
 /**
@@ -99,7 +108,7 @@ server.registerTool(
       // Tell the caller when the row cap was hit so it doesn't treat a capped
       // page as the complete set (consistent with the grep path).
       if (meta.truncated) lines.push(TRUNCATION_NOTICE);
-      return { content: [{ type: "text", text: lines.join("\n\n---\n\n") }] };
+      return okResult(lines.join("\n\n---\n\n"));
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isMissingTableError(msg)) return errorResult(`No matches for "${query}". ${FRESH_ORG_HINT}`);
@@ -133,7 +142,7 @@ server.registerTool(
       const rows = await ctx.api.query(sql);
       if (rows.length === 0) return errorResult(`No content found at ${path}.`);
       const text = rows.map(r => normalizeContent(String(r["path"]), String(r["content"] ?? ""))).join("\n");
-      return { content: [{ type: "text", text }] };
+      return okResult(text);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isMissingTableError(msg)) return errorResult(`No content found at ${path}. ${FRESH_ORG_HINT}`);
@@ -174,7 +183,7 @@ server.registerTool(
         const date = String(r["last_update_date"] ?? "");
         return `${path}\t${date}\t${project}\t${desc}`;
       });
-      return { content: [{ type: "text", text: `path\tlast_updated\tproject\tdescription\n${lines.join("\n")}` }] };
+      return okResult(`path\tlast_updated\tproject\tdescription\n${lines.join("\n")}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isMissingTableError(msg)) return errorResult(`No summaries found. ${FRESH_ORG_HINT}`);
@@ -186,6 +195,10 @@ server.registerTool(
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Cowork has no capture hooks — tail its local transcripts and write them
+  // to the sessions table so Cowork conversations become shared memory too.
+  // Best-effort and self-throttling; never touches the stdio channel.
+  startCoworkIngestLoop();
 }
 
 main().catch((err) => {

@@ -89,6 +89,8 @@ export interface SpawnOptions {
   cwd: string;
   bundleDir: string;
   reason: string;
+  /** Value written to the summary's `agent` column. Defaults to "claude_code". */
+  agent?: string;
 }
 
 export function spawnWikiWorker(opts: SpawnOptions): void {
@@ -111,6 +113,7 @@ export function spawnWikiWorker(opts: SpawnOptions): void {
     sessionId,
     userName: config.userName,
     project: projectName,
+    agent: opts.agent ?? "claude_code",
     pluginVersion,
     tmpDir,
     claudeBin: findClaudeBin(),

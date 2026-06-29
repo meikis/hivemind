@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  Auto-learning, cloud-backed shared brain for <b>Claude Code • OpenClaw • Codex • Cursor • Hermes • pi</b> agents.<br>
+  Auto-learning, cloud-backed shared brain for <b>Claude Code • OpenClaw • Codex • Cursor • Hermes • pi • Claude Cowork (Alpha)</b> agents.<br>
 </p>
 
 <p align="center">
@@ -90,6 +90,7 @@ hivemind claw install
 hivemind cursor install
 hivemind hermes install
 hivemind pi install
+hivemind claude_cowork install   # Alpha
 ```
 
 **Check what's wired up:**
@@ -108,6 +109,9 @@ hivemind status
 | **Cursor**       | Hooks (`hooks.json` 1.7+)                        | ✅           | ✅          |
 | **Hermes Agent** | Shell hooks (`config.yaml`) + skill + MCP server | ✅           | ✅          |
 | **pi**           | Extension API (`pi.on(...)`) + skill + AGENTS.md | ✅           | ✅          |
+| **Claude Cowork** 🅰️ | MCP server (Claude Desktop)                  | 🅰️ Alpha¹    | ✅          |
+
+🅰️ **Claude Cowork is Alpha.** Auto-recall (the `hivemind_search` / `read` / `index` tools) is solid. ¹Auto-capture covers **Local Agent Mode** sessions only — those write a transcript we can tail; plain desktop-chat turns leave no readable local trace and aren't captured ([why](#claude-cowork-alpha)).
 
 ### Alternative install paths
 
@@ -230,6 +234,21 @@ hivemind pi install
 Note: no per-agent SKILL.md is dropped under `~/.pi/agent/skills/`; pi reads skills from both that directory AND the shared `~/.agents/skills/` location. If the codex installer has run on the same machine, pi picks up the hivemind skill from the shared `~/.agents/skills/hivemind-memory` symlink automatically. The AGENTS.md block plus the registered tools cover the action surface in either case.
 </details>
 
+### Claude Cowork (Alpha)
+
+[Claude Cowork](https://support.claude.com/en/articles/11503834) is Anthropic's agentic assistant inside the Claude Desktop app. It has **no hook lifecycle** like the other agents — it only talks to Hivemind through MCP — so the integration works differently and ships as **Alpha**.
+
+```bash
+hivemind claude_cowork install
+```
+
+This registers the shared MCP server (`~/.hivemind/mcp/server.js`) under `mcpServers.hivemind` in Claude Desktop's `claude_desktop_config.json`. **Fully quit and reopen Claude Desktop** to load it.
+
+**Recall (stable).** Cowork gains `hivemind_search`, `hivemind_read`, and `hivemind_index` — the same shared memory every other agent reads. On the first tool use per host, a one-time data-collection notice is prepended to the result.
+
+**Auto-capture (Alpha) — how it works.** With no SessionStart/Stop hooks to capture from, the MCP server runs a background ingester that **tails Cowork's Local Agent Mode transcripts** (`~/Library/Application Support/Claude/local-agent-mode-sessions/**/.claude/projects/<enc>/<sessionId>.jsonl`). For each new line it writes a row to the `sessions` table with `agent="claude_cowork"` (user prompts, assistant messages, tool calls + results), de-duplicated by a per-transcript line watermark. When a transcript has been idle for 5 minutes it is treated as finished, and the same wiki-worker / skillify workers every other agent uses run for it (summary tagged `claude_cowork` → it shows up in `hivemind_index`).
+
+**Known limitation.** <a id="claude-cowork-alpha"></a>Only **Local Agent Mode** sessions (where Cowork opens its sandbox/agent and *works*) write a transcript we can read. Plain **desktop-chat** turns are not captured: by MCP design a server never sees the conversation (only the tool calls the model makes), and the chat itself lives in Anthropic's cloud + a compressed claude.ai IndexedDB cache with no supported read surface. Capturing those would need an official Anthropic export/hook.
 
 ### Uninstall
 
