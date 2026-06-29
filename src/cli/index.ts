@@ -368,7 +368,7 @@ async function runInstallAll(args: string[]): Promise<void> {
 
   if (targets.length === 0) {
     log("No supported assistants detected.");
-    log("Supported: Claude Code, Codex, OpenClaw, Cursor, Hermes Agent, Claude Cowork.");
+    log("Supported: Claude Code, Codex, OpenClaw, Cursor, Hermes Agent, Pi, Claude Cowork.");
     log("Install one and rerun `hivemind install`, or target a specific assistant: `hivemind cursor install`.");
     return;
   }
