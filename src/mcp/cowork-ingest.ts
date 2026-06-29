@@ -28,6 +28,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -59,6 +60,9 @@ const LOCK_PATH = join(DEEPLAKE_DIR, ".cowork-ingest.lock");
 const COWORK_QUEUE_DIR = join(DEEPLAKE_DIR, "queue-cowork");
 const NOTICE_MARKER = join(DEEPLAKE_DIR, ".cowork-data-notice-shown");
 const LOCK_STALE_MS = 60_000;
+// Refresh the held lock's mtime well inside LOCK_STALE_MS so a long ingest is
+// never mistaken for a dead run and stolen mid-flight by a second process.
+const LOCK_HEARTBEAT_MS = 20_000;
 // A Cowork transcript untouched for this long is treated as a finished session
 // and gets a summary (Cowork has no SessionEnd hook to signal completion).
 const SUMMARY_IDLE_MS = 5 * 60_000;
@@ -246,7 +250,24 @@ function tryAcquireLock(): (() => void) | null {
     try {
       const fd = openSync(LOCK_PATH, "wx");
       closeSync(fd);
-      return () => rmSync(LOCK_PATH, { force: true });
+      // Heartbeat the lock mtime so a run that outlives LOCK_STALE_MS (many
+      // transcripts / slow upload) is not seen as abandoned and stolen by a
+      // second Cowork process — which would replay the same transcripts and
+      // duplicate session rows. Cleared on release; unref'd so it never keeps
+      // the process alive on its own.
+      const heartbeat = setInterval(() => {
+        try {
+          const t = new Date();
+          utimesSync(LOCK_PATH, t, t);
+        } catch {
+          /* lock vanished — nothing to refresh */
+        }
+      }, LOCK_HEARTBEAT_MS);
+      heartbeat.unref?.();
+      return () => {
+        clearInterval(heartbeat);
+        rmSync(LOCK_PATH, { force: true });
+      };
     } catch (e: unknown) {
       if ((e as { code?: string }).code !== "EEXIST") return null;
       try {
@@ -395,6 +416,11 @@ export async function ingestCoworkSessions(): Promise<{ ingested: number } | { s
         sessionsTable: config.sessionsTableName,
         queueDir: COWORK_QUEUE_DIR,
       });
+      // Persist the line watermark immediately after the upload, before the
+      // slow summarize step below. Rows carry random ids, so a crash between
+      // the insert and a later saveState would replay these lines under fresh
+      // ids and duplicate them. Saving here shrinks that window to this write.
+      saveState(state);
     }
 
     // Summarize sessions that have gone idle — Cowork has no SessionEnd hook,
