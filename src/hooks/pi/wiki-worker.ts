@@ -175,7 +175,7 @@ async function main(): Promise<void> {
     const newLines = newRows.map(r => typeof r.message === "string" ? r.message : JSON.stringify(r.message));
     const { kept, dropped } = capLinesByBytes(newLines, WIKI_JSONL_MAX_BYTES);
     if (dropped > 0) {
-      wlog(`new rows exceed ${WIKI_JSONL_MAX_BYTES}B — kept newest ${kept.length}, dropped ${dropped} oldest`);
+      wlog(`new rows exceed ${WIKI_JSONL_MAX_BYTES}B — summarizing newest ${kept.length}, permanently skipping ${dropped} older rows`);
     }
 
     writeFileSync(tmpJsonl, kept.join("\n"));

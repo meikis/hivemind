@@ -46,6 +46,15 @@ export function stampOffset(summary: string, offset: number): string {
  * line even if it alone exceeds the budget. Returns the kept lines (in original
  * order) and how many were dropped, so the caller can log it — never a silent
  * truncation.
+ *
+ * INTENTIONAL TRADEOFF: the workers advance the offset to the full row total
+ * even when `dropped > 0`, so the dropped (oldest) rows are NOT re-summarized on
+ * a later run. This only fires in a degenerate case — a single increment over
+ * `maxBytes`, i.e. the first summary of an already-huge backlog (offset 0) or a
+ * lone giant row. With a correct offset, normal increments are tiny and nothing
+ * is ever dropped. In the rare overflow we deliberately keep the most RECENT
+ * content (the useful "current state" for resuming) over exhaustive coverage of
+ * ancient rows, and log the skip.
  */
 export function capLinesByBytes(lines: string[], maxBytes: number): { kept: string[]; dropped: number } {
   if (lines.length === 0) return { kept: [], dropped: 0 };
