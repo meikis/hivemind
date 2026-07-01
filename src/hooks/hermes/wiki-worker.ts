@@ -156,7 +156,14 @@ async function main(): Promise<void> {
         writeFileSync(tmpSummary, existing);
         hasExistingSummary = true;
       }
-    } catch { /* no existing summary */ }
+    } catch (e: any) {
+      // A genuine lookup failure (query() throws only after its own retries) is
+      // NOT the same as "no summary". Treating it as absent would slice to the
+      // newest rows and overwrite the canonical summary with a base-less one, so
+      // bail and retry on the next run instead.
+      wlog(`existing summary lookup failed: ${e.message}; skipping to avoid overwriting the base summary`);
+      return;
+    }
     // The offset only means something if we actually loaded the summary it
     // refers to. If the summary row is gone (or the read failed), slicing by a
     // stale sidecar count would drop old rows with no base summary to extend,

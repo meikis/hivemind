@@ -286,6 +286,27 @@ describe("codex wiki-worker — happy path", () => {
     expect(prompt).toContain("OFFSET=0");
   });
 
+  it("skips the run when the existing-summary lookup fails (no overwrite)", async () => {
+    // A transient failure of the summary SELECT must NOT be read as "no summary"
+    // — that would regenerate from scratch and overwrite the canonical summary.
+    fetchMock.mockImplementation(async (_url: string, init: any) => {
+      const sql = JSON.parse(init.body).query as string;
+      if (sql.startsWith("SELECT message, creation_date")) {
+        return jsonResp({ columns: ["message", "creation_date"], rows: [[JSON.stringify({ type: "user_message", content: "hi" }), "t"]] });
+      }
+      if (sql.startsWith("SELECT DISTINCT path")) return jsonResp({ columns: ["path"], rows: [["/x.jsonl"]] });
+      if (sql.startsWith("SELECT summary FROM")) throw new Error("db down");
+      return jsonResp({ columns: [], rows: [] });
+    });
+    await runWorker();
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+    expect(uploadSummaryMock).not.toHaveBeenCalled();
+    expect(finalizeSummaryMock).not.toHaveBeenCalled();
+    const log = readFileSync(join(hooksDir, "wiki.log"), "utf-8");
+    expect(log).toContain("existing summary lookup failed");
+    expect(releaseLockMock).toHaveBeenCalledWith("sid-codex");
+  });
+
   it("falls back to /sessions/unknown/ when path SELECT empty", async () => {
     mkFetch(0);
     execFileSyncMock.mockImplementation((_bin: string, args: string[]) => {
