@@ -24,6 +24,7 @@ import { join } from "node:path";
 
 const finalizeSummaryMock = vi.fn();
 const releaseLockMock = vi.fn();
+const readStateMock = vi.fn();
 const uploadSummaryMock = vi.fn();
 const execFileSyncMock = vi.fn();
 const embedSummaryMock = vi.fn();
@@ -34,6 +35,7 @@ const originalArgv2 = process.argv[2];
 vi.mock("../../src/hooks/summary-state.js", () => ({
   finalizeSummary: (...a: any[]) => finalizeSummaryMock(...a),
   releaseLock: (...a: any[]) => releaseLockMock(...a),
+  readState: (...a: any[]) => readStateMock(...a),
 }));
 vi.mock("../../src/hooks/upload-summary.js", () => ({
   uploadSummary: (...a: any[]) => uploadSummaryMock(...a),
@@ -100,6 +102,7 @@ beforeEach(() => {
   fetchMock.mockReset();
   finalizeSummaryMock.mockReset();
   releaseLockMock.mockReset();
+  readStateMock.mockReset().mockReturnValue(null);
   uploadSummaryMock.mockReset().mockResolvedValue({ path: "insert", summaryLength: 100, descLength: 20, sql: "..." });
   embedSummaryMock.mockReset().mockResolvedValue([0.1, 0.2, 0.3]);
   // execFileSync stub: simulate the LLM by writing the summary file the
@@ -296,9 +299,14 @@ describe("wiki-worker resume + embeddings-disabled branches — per agent", () =
       fetchMock.mockImplementation(async (_url: string, init: any) => {
         const sql = JSON.parse(init.body).query as string;
         if (sql.startsWith("SELECT message, creation_date")) {
+          // 43 rows so the offset-42 resume baseline still leaves 1 new row to
+          // summarize (otherwise the worker correctly skips a no-new-rows run).
           return jsonResp({
             columns: ["message", "creation_date"],
-            rows: [[JSON.stringify({ type: "user_message", content: "hi" }), "2026-04-20T00:00:00Z"]],
+            rows: Array.from({ length: 43 }, (_, i) => [
+              JSON.stringify({ type: "user_message", content: `hi ${i}` }),
+              "2026-04-20T00:00:00Z",
+            ]),
           });
         }
         if (sql.startsWith("SELECT DISTINCT path")) {

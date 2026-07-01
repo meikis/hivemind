@@ -12,6 +12,7 @@ import { join } from "node:path";
 
 const finalizeSummaryMock = vi.fn();
 const releaseLockMock = vi.fn();
+const readStateMock = vi.fn();
 const uploadSummaryMock = vi.fn();
 const execFileSyncMock = vi.fn();
 const embedSummaryMock = vi.fn();
@@ -19,6 +20,7 @@ const embedSummaryMock = vi.fn();
 vi.mock("../../src/hooks/summary-state.js", () => ({
   finalizeSummary: (...a: any[]) => finalizeSummaryMock(...a),
   releaseLock: (...a: any[]) => releaseLockMock(...a),
+  readState: (...a: any[]) => readStateMock(...a),
 }));
 vi.mock("../../src/hooks/upload-summary.js", () => ({
   uploadSummary: (...a: any[]) => uploadSummaryMock(...a),
@@ -92,6 +94,7 @@ beforeEach(() => {
   fetchMock.mockReset();
   finalizeSummaryMock.mockReset();
   releaseLockMock.mockReset();
+  readStateMock.mockReset().mockReturnValue(null);
   uploadSummaryMock.mockReset().mockResolvedValue({ path: "insert", summaryLength: 80, descLength: 15, sql: "..." });
   embedSummaryMock.mockReset().mockResolvedValue([0.1, 0.2, 0.3]);
   execFileSyncMock.mockReset();

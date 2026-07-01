@@ -17,6 +17,7 @@ import { join } from "node:path";
 
 const finalizeSummaryMock = vi.fn();
 const releaseLockMock = vi.fn();
+const readStateMock = vi.fn();
 const uploadSummaryMock = vi.fn();
 const execFileSyncMock = vi.fn();
 const embedSummaryMock = vi.fn();
@@ -24,6 +25,7 @@ const embedSummaryMock = vi.fn();
 vi.mock("../../src/hooks/summary-state.js", () => ({
   finalizeSummary: (...a: any[]) => finalizeSummaryMock(...a),
   releaseLock: (...a: any[]) => releaseLockMock(...a),
+  readState: (...a: any[]) => readStateMock(...a),
 }));
 vi.mock("../../src/hooks/upload-summary.js", () => ({
   uploadSummary: (...a: any[]) => uploadSummaryMock(...a),
@@ -98,6 +100,7 @@ beforeEach(() => {
   fetchMock.mockReset();
   finalizeSummaryMock.mockReset();
   releaseLockMock.mockReset();
+  readStateMock.mockReset().mockReturnValue(null);
   uploadSummaryMock.mockReset().mockResolvedValue({ path: "insert", summaryLength: 80, descLength: 15, sql: "..." });
   embedSummaryMock.mockReset().mockResolvedValue([0.1, 0.2, 0.3]);
   execFileSyncMock.mockReset();
@@ -137,11 +140,15 @@ describe("codex wiki-worker — happy path", () => {
     { message: JSON.stringify({ type: "user_message", content: "hello codex" }), creation_date: "2026-04-20T00:00:00Z" },
   ];
 
-  const mkFetch = (pathRows = 1, hasSummary = false) => {
+  const mkFetch = (pathRows = 1, hasSummary = false, eventCount = 1) => {
+    const rows = Array.from({ length: eventCount }, (_, i) => [
+      JSON.stringify({ type: "user_message", content: `hello codex ${i}` }),
+      "2026-04-20T00:00:00Z",
+    ]);
     return fetchMock.mockImplementation(async (_url: string, init: any) => {
       const sql = JSON.parse(init.body).query as string;
       if (sql.startsWith("SELECT message, creation_date")) {
-        return jsonResp({ columns: ["message", "creation_date"], rows: eventRow.map(r => [r.message, r.creation_date]) });
+        return jsonResp({ columns: ["message", "creation_date"], rows: eventCount === 1 ? eventRow.map(r => [r.message, r.creation_date]) : rows });
       }
       if (sql.startsWith("SELECT DISTINCT path")) {
         return jsonResp({
@@ -189,15 +196,21 @@ describe("codex wiki-worker — happy path", () => {
     const params = uploadSummaryMock.mock.calls[0][1];
     expect(params.agent).toBe("codex");
     expect(params.sessionId).toBe("sid-codex");
+    // The worker stamps the offset itself — the uploaded summary carries it
+    // even though the fake codex output above never wrote the bookkeeping line.
+    expect(params.text).toContain("**JSONL offset**: 1");
 
     expect(finalizeSummaryMock).toHaveBeenCalledWith("sid-codex", 1);
     expect(releaseLockMock).toHaveBeenCalledWith("sid-codex");
   });
 
-  it("parses JSONL offset from an existing summary on resumed session", async () => {
-    mkFetch(1, true);
+  it("parses JSONL offset from an existing summary and feeds only new rows", async () => {
+    // 9 total rows, existing summary offset 7 → only rows 8 and 9 are new.
+    mkFetch(1, true, 9);
+    let capturedJsonl: string | null = null;
     execFileSyncMock.mockImplementation((_bin: string, args: string[]) => {
       const prompt = args[2];
+      capturedJsonl = readFileSync(prompt.match(/JSONL=(\S+)/)![1], "utf-8");
       const summaryPath = prompt.match(/SUMMARY=(\S+)/)![1];
       writeFileSync(summaryPath, "# updated\n\n## What Happened\n...\n");
       return Buffer.from("");
@@ -205,8 +218,36 @@ describe("codex wiki-worker — happy path", () => {
     await runWorker();
     const prompt = execFileSyncMock.mock.calls[0][1][2] as string;
     expect(prompt).toContain("OFFSET=7");
+    // Only the rows after the offset reach the JSONL — not the full session.
+    expect(capturedJsonl!.trim().split("\n")).toHaveLength(2);
+    expect(capturedJsonl).toContain("hello codex 7");
+    expect(capturedJsonl).toContain("hello codex 8");
+    expect(capturedJsonl).not.toContain("hello codex 0");
     const log = readFileSync(join(hooksDir, "wiki.log"), "utf-8");
-    expect(log).toContain("existing summary found, offset=7");
+    expect(log).toContain("9 events (2 new since offset 7)");
+  });
+
+  it("caps the codex exec output buffer so a verbose run can't ENOBUFS", async () => {
+    mkFetch();
+    execFileSyncMock.mockImplementation((_bin: string, args: string[]) => {
+      writeFileSync(args[2].match(/SUMMARY=(\S+)/)![1], "# s\n\n## What Happened\nx\n");
+      return Buffer.from("");
+    });
+    await runWorker();
+    const execOpts = execFileSyncMock.mock.calls[0][2];
+    expect(execOpts.maxBuffer).toBeGreaterThanOrEqual(64 * 1024 * 1024);
+  });
+
+  it("skips codex exec when the sidecar offset already covers every row", async () => {
+    // 3 rows total, but the sidecar says 3 were already summarized → nothing new.
+    mkFetch(1, false, 3);
+    readStateMock.mockReturnValue({ lastSummaryAt: 0, lastSummaryCount: 3, totalCount: 3 });
+    await runWorker();
+    expect(execFileSyncMock).not.toHaveBeenCalled();
+    expect(uploadSummaryMock).not.toHaveBeenCalled();
+    const log = readFileSync(join(hooksDir, "wiki.log"), "utf-8");
+    expect(log).toContain("no new events since last summary");
+    expect(releaseLockMock).toHaveBeenCalledWith("sid-codex");
   });
 
   it("falls back to /sessions/unknown/ when path SELECT empty", async () => {
