@@ -41,14 +41,30 @@ describe("capLinesByBytes", () => {
     expect(dropped).toBe(0);
   });
 
-  it("always keeps at least the last line even when it alone exceeds the budget", () => {
+  it("keeps only the last line but truncates it when it alone exceeds the budget", () => {
     const lines = ["x", "y".repeat(100)];
-    const { kept, dropped } = capLinesByBytes(lines, 10);
-    expect(kept).toEqual([lines[1]]);
+    const { kept, dropped, truncated } = capLinesByBytes(lines, 10);
     expect(dropped).toBe(1);
+    expect(truncated).toBe(true);
+    expect(kept).toHaveLength(1);
+    expect(Buffer.byteLength(kept[0], "utf8")).toBeLessThanOrEqual(10);
   });
 
   it("handles an empty input", () => {
-    expect(capLinesByBytes([], 10)).toEqual({ kept: [], dropped: 0 });
+    expect(capLinesByBytes([], 10)).toEqual({ kept: [], dropped: 0, truncated: false });
+  });
+
+  it("truncates a lone oversized line so the output stays within the budget", () => {
+    const line = "z".repeat(100);
+    const { kept, dropped, truncated } = capLinesByBytes([line], 10);
+    expect(dropped).toBe(0);
+    expect(truncated).toBe(true);
+    expect(kept).toHaveLength(1);
+    expect(Buffer.byteLength(kept[0], "utf8")).toBeLessThanOrEqual(10);
+  });
+
+  it("does not report truncation when the retained line fits", () => {
+    const { truncated } = capLinesByBytes(["ok"], 10);
+    expect(truncated).toBe(false);
   });
 });
