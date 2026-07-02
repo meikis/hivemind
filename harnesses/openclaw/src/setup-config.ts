@@ -8,7 +8,27 @@ import { existsSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const HIVEMIND_TOOL_NAMES = ["hivemind_search", "hivemind_read", "hivemind_index"];
+/** Every tool registered by the openclaw plugin (contracts + setup hints). */
+export const HIVEMIND_TOOL_NAMES = [
+  "hivemind_search",
+  "hivemind_read",
+  "hivemind_index",
+  "hivemind_goal_add",
+  "hivemind_kpi_add",
+  "hivemind_graph_search",
+  "hivemind_graph_neighborhood",
+];
+
+/**
+ * Core memory tools whose per-name alsoAllow entry counts as full suite
+ * coverage. Niche tools (goals/KPIs/graph) must NOT — a user who allowlists
+ * only hivemind_graph_search still needs "hivemind" added by /hivemind_setup.
+ */
+export const HIVEMIND_CORE_ALLOWLIST_TOOLS = [
+  "hivemind_search",
+  "hivemind_read",
+  "hivemind_index",
+];
 
 export function getOpenclawConfigPath(): string {
   return join(homedir(), ".openclaw", "openclaw.json");
@@ -21,7 +41,7 @@ export function isAllowlistCoveringHivemind(alsoAllow: unknown): boolean {
     const normalized = entry.trim().toLowerCase();
     if (normalized === "hivemind") return true;
     if (normalized === "group:plugins") return true;
-    if (HIVEMIND_TOOL_NAMES.includes(normalized)) return true;
+    if (HIVEMIND_CORE_ALLOWLIST_TOOLS.includes(normalized)) return true;
   }
   return false;
 }
